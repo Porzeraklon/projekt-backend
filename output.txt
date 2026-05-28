@@ -45,20 +45,164 @@ docker-compose.yml
 output.txt
 
 ================================================
-File: WorkerService/Properties/launchSettings.json
+File: MainApi/Data/DatabaseSeeder.cs
 ================================================
-﻿{
-  "$schema": "http://json.schemastore.org/launchsettings.json",
-  "profiles": {
-    "WorkerService": {
-      "commandName": "Project",
-      "dotnetRunMessages": true,
-      "environmentVariables": {
-        "DOTNET_ENVIRONMENT": "Development"
-      }
+using SharedModels.Entities;
+using SharedModels.Enums;
+using OtpNet;
+
+namespace MainApi.Data;
+
+public static class DatabaseSeeder
+{
+    public static void Seed(AppDbContext context)
+    {
+        // Tworzy bazę danych (jeśli nie istnieje) na podstawie Twojego DbContextu
+        context.Database.EnsureCreated(); 
+
+        if (!context.Users.Any())
+        {
+            // Generowanie klucza 2FA dla Admina
+            var key = KeyGeneration.GenerateRandomKey(20);
+            var base32Secret = Base32Encoding.ToString(key);
+
+            var admin = new User
+            {
+                Email = "admin@test.com",
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword("Admin123!"),
+                Role = Role.Admin,
+                TwoFactorEnabled = true,
+                TwoFactorSecret = base32Secret,
+                ContactInfo = "Główny Serwer"
+            };
+
+            var employee = new User
+            {
+                Email = "user@test.com",
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword("User123!"),
+                Role = Role.Employee,
+                TwoFactorEnabled = false,
+                ContactInfo = "Biurko 42"
+            };
+
+            context.Users.AddRange(admin, employee);
+            context.SaveChanges();
+
+            // Wypisujemy tajny klucz jawnym tekstem do testów
+            Console.WriteLine("\n==================================================");
+            Console.WriteLine(" DATA SEEDING: Utworzono konta testowe!");
+            Console.WriteLine($" Admin Email: {admin.Email}");
+            Console.WriteLine($" Admin Hasło: Admin123!");
+            Console.WriteLine($" Admin 2FA Secret: {base32Secret}");
+            Console.WriteLine("==================================================\n");
+        }
     }
+}
+
+================================================
+File: SharedModels/SharedModels.csproj
+================================================
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
+
+
+================================================
+File: WorkerService/Hubs/NotificationHub.cs
+================================================
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.SignalR;
+
+namespace WorkerService.Hubs;
+
+[Authorize]
+public class NotificationHub : Hub
+{
+    public override async Task OnConnectedAsync()
+    {
+        if (Context.User != null && Context.User.IsInRole("Admin"))
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, "AdminsGroup");
+        }
+        
+        await base.OnConnectedAsync();
+    }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        if (Context.User != null && Context.User.IsInRole("Admin"))
+        {
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, "AdminsGroup");
+        }
+        
+        await base.OnDisconnectedAsync(exception);
+    }
+}
+
+================================================
+File: WorkerService/appsettings.json
+================================================
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.Hosting.Lifetime": "Information"
+    }
+  },
+  "AllowedOrigins": "http://localhost:5173;http://localhost:8080",
+  "RabbitMQ": {
+    "HostName": "rabbitmq" 
+  },
+  "Jwt": {
+    "Key": "SET_IN_ENVIRONMENT",
+    "Issuer": "TicketingApi",
+    "Audience": "TicketingUsers"
   }
 }
+
+================================================
+File: TicketingSystem.sln
+================================================
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MainApi", "MainApi\MainApi.csproj", "{9D5F2861-0F16-485B-8E71-9776372CCB9F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WorkerService", "WorkerService\WorkerService.csproj", "{271B787B-5A82-45A9-8BE4-8E16BEDCC745}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharedModels", "SharedModels\SharedModels.csproj", "{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Release|Any CPU.Build.0 = Release|Any CPU
+		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
 
 
 ================================================
@@ -153,66 +297,19 @@ public class AuthController : ControllerBase
 }
 
 ================================================
-File: MainApi/Data/AppDbContext.cs
-================================================
-using Microsoft.EntityFrameworkCore;
-using MainApi.Entities;
-
-namespace MainApi.Data;
-
-public class AppDbContext : DbContext
-{
-    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
-
-    public DbSet<User> Users { get; set; }
-    public DbSet<Ticket> Tickets { get; set; }
-
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        base.OnModelCreating(modelBuilder);
-
-        // Wymuszenie unikalności adresu Email
-        modelBuilder.Entity<User>()
-            .HasIndex(u => u.Email)
-            .IsUnique();
-
-        // Konfiguracja relacji bazy danych
-        modelBuilder.Entity<Ticket>()
-            .HasOne(t => t.Creator)
-            .WithMany(u => u.Tickets)
-            .HasForeignKey(t => t.CreatorId)
-            .OnDelete(DeleteBehavior.Restrict); // Zapobiega kaskadowemu usunięciu ticketów przy usunięciu użytkownika
-    }
-}
-
-================================================
-File: MainApi/Entities/Ticket.cs
+File: MainApi/DTOs/LoginRequest.cs
 ================================================
 using System.ComponentModel.DataAnnotations;
-using SharedModels.Enums;
 
-namespace MainApi.Entities;
+namespace MainApi.DTOs;
 
-public class Ticket
+public class LoginRequest
 {
-    public Guid Id { get; set; } = Guid.NewGuid();
+    [Required, EmailAddress]
+    public string Email { get; set; } = string.Empty;
 
     [Required]
-    public string Title { get; set; } = string.Empty;
-
-    [Required]
-    public string Description { get; set; } = string.Empty;
-
-    public TicketStatus Status { get; set; } = TicketStatus.New;
-    public TicketCategory Category { get; set; }
-
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-
-    // Klucz obcy i właściwość nawigacyjna do twórcy zgłoszenia
-    public Guid CreatorId { get; set; }
-    public User? Creator { get; set; }
-    // Dodaj tę linijkę w klasie Ticket:
-    public bool IsArchived { get; set; } = false;
+    public string Password { get; set; } = string.Empty;
 }
 
 ================================================
@@ -240,394 +337,6 @@ File: MainApi/appsettings.json
     "ExpireMinutes": 120
   }
 }
-
-================================================
-File: MainApi/DTOs/CreateTicketRequest.cs
-================================================
-using SharedModels.Enums;
-using System.ComponentModel.DataAnnotations;
-
-namespace MainApi.DTOs;
-
-public class CreateTicketRequest
-{
-    [Required]
-    public string Title { get; set; } = string.Empty;
-
-    [Required]
-    public string Description { get; set; } = string.Empty;
-
-    [Required]
-    public TicketCategory Category { get; set; }
-}
-
-================================================
-File: MainApi/DTOs/UpdateTicketStatusRequest.cs
-================================================
-using SharedModels.Enums;
-using System.ComponentModel.DataAnnotations;
-
-namespace MainApi.DTOs;
-
-public class UpdateTicketStatusRequest
-{
-    [Required]
-    public TicketStatus Status { get; set; } // Zwróć uwagę na nazwę swojego enuma, jeśli masz inną
-}
-
-================================================
-File: MainApi/Entities/User.cs
-================================================
-using System.ComponentModel.DataAnnotations;
-using SharedModels.Enums;
-
-namespace MainApi.Entities;
-
-public class User
-{
-    public Guid Id { get; set; } = Guid.NewGuid();
-
-    [Required, EmailAddress]
-    public string Email { get; set; } = string.Empty;
-
-    [Required]
-    public string PasswordHash { get; set; } = string.Empty;
-
-    public Role Role { get; set; }
-
-    public bool TwoFactorEnabled { get; set; }
-    public string? TwoFactorSecret { get; set; }
-
-    public string? ContactInfo { get; set; }
-
-    // Relacja 1 do wielu (Jeden użytkownik może mieć wiele zgłoszeń)
-    public ICollection<Ticket> Tickets { get; set; } = new List<Ticket>();
-}
-
-================================================
-File: SharedModels/Enums/Role.cs
-================================================
-namespace SharedModels.Enums;
-
-public enum Role 
-{ 
-    Admin, 
-    Employee 
-}
-
-================================================
-File: SharedModels/Enums/TicketStatus.cs
-================================================
-namespace SharedModels.Enums;
-
-public enum TicketStatus 
-{ 
-    New, 
-    InProgress, 
-    Resolved, 
-    Closed 
-}
-
-================================================
-File: MainApi/Properties/launchSettings.json
-================================================
-﻿{
-  "$schema": "http://json.schemastore.org/launchsettings.json",
-  "iisSettings": {
-    "windowsAuthentication": false,
-    "anonymousAuthentication": true,
-    "iisExpress": {
-      "applicationUrl": "http://localhost:28845",
-      "sslPort": 44396
-    }
-  },
-  "profiles": {
-    "http": {
-      "commandName": "Project",
-      "dotnetRunMessages": true,
-      "launchBrowser": true,
-      "launchUrl": "swagger",
-      "applicationUrl": "http://localhost:5038",
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
-      }
-    },
-    "https": {
-      "commandName": "Project",
-      "dotnetRunMessages": true,
-      "launchBrowser": true,
-      "launchUrl": "swagger",
-      "applicationUrl": "https://localhost:7047;http://localhost:5038",
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
-      }
-    },
-    "IIS Express": {
-      "commandName": "IISExpress",
-      "launchBrowser": true,
-      "launchUrl": "swagger",
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
-      }
-    }
-  }
-}
-
-
-================================================
-File: SharedModels/Enums/TicketCategory.cs
-================================================
-namespace SharedModels.Enums;
-
-public enum TicketCategory 
-{ 
-    Hardware, 
-    Software 
-}
-
-================================================
-File: SharedModels/Events/TicketCreatedEvent.cs
-================================================
-namespace SharedModels.Events;
-
-public class TicketCreatedEvent
-{
-    public Guid TicketId { get; set; } // <-- ZMIANA Z int NA Guid
-    public string Title { get; set; } = string.Empty;
-    public string CreatorEmail { get; set; } = string.Empty;
-}
-
-================================================
-File: TicketingSystem.sln
-================================================
-﻿
-Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.0.31903.59
-MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MainApi", "MainApi\MainApi.csproj", "{9D5F2861-0F16-485B-8E71-9776372CCB9F}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WorkerService", "WorkerService\WorkerService.csproj", "{271B787B-5A82-45A9-8BE4-8E16BEDCC745}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharedModels", "SharedModels\SharedModels.csproj", "{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}"
-EndProject
-Global
-	GlobalSection(SolutionConfigurationPlatforms) = preSolution
-		Debug|Any CPU = Debug|Any CPU
-		Release|Any CPU = Release|Any CPU
-	EndGlobalSection
-	GlobalSection(SolutionProperties) = preSolution
-		HideSolutionNode = FALSE
-	EndGlobalSection
-	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Release|Any CPU.Build.0 = Release|Any CPU
-		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Release|Any CPU.Build.0 = Release|Any CPU
-		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Release|Any CPU.Build.0 = Release|Any CPU
-	EndGlobalSection
-EndGlobal
-
-
-================================================
-File: WorkerService/Hubs/NotificationHub.cs
-================================================
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.SignalR;
-
-namespace WorkerService.Hubs;
-
-[Authorize]
-public class NotificationHub : Hub
-{
-    public override async Task OnConnectedAsync()
-    {
-        if (Context.User != null && Context.User.IsInRole("Admin"))
-        {
-            await Groups.AddToGroupAsync(Context.ConnectionId, "AdminsGroup");
-        }
-        
-        await base.OnConnectedAsync();
-    }
-
-    public override async Task OnDisconnectedAsync(Exception? exception)
-    {
-        if (Context.User != null && Context.User.IsInRole("Admin"))
-        {
-            await Groups.RemoveFromGroupAsync(Context.ConnectionId, "AdminsGroup");
-        }
-        
-        await base.OnDisconnectedAsync(exception);
-    }
-}
-
-================================================
-File: WorkerService/appsettings.json
-================================================
-{
-  "Logging": {
-    "LogLevel": {
-      "Default": "Information",
-      "Microsoft.Hosting.Lifetime": "Information"
-    }
-  },
-  "RabbitMQ": {
-    "HostName": "rabbitmq" 
-  },
-  "Jwt": {
-    "Key": "SET_IN_ENVIRONMENT",
-    "Issuer": "TicketingApi",
-    "Audience": "TicketingUsers"
-  }
-}
-
-================================================
-File: MainApi/DTOs/LoginRequest.cs
-================================================
-using System.ComponentModel.DataAnnotations;
-
-namespace MainApi.DTOs;
-
-public class LoginRequest
-{
-    [Required, EmailAddress]
-    public string Email { get; set; } = string.Empty;
-
-    [Required]
-    public string Password { get; set; } = string.Empty;
-}
-
-================================================
-File: MainApi/Services/RabbitMqService.cs
-================================================
-using RabbitMQ.Client;
-using System.Text;
-using System.Text.Json;
-
-namespace MainApi.Services;
-
-public class RabbitMqService : IDisposable
-{
-    private readonly IConnection _connection;
-
-    public RabbitMqService(IConfiguration configuration)
-    {
-        // Czytamy hosta z konfiguracji, by Docker mógł to łatwo nadpisać
-        var host = configuration["RabbitMQ:HostName"] ?? "localhost";
-        var factory = new ConnectionFactory() { HostName = host };
-        
-        // Ustanawiamy JEDNO globalne połączenie dla całego cyklu życia API
-        _connection = factory.CreateConnection();
-    }
-
-    public void PublishTicketCreatedEvent<T>(T message)
-    {
-        // Kanały (Channels) są lekkie - otwieramy je per publikacja (nie są thread-safe)
-        using var channel = _connection.CreateModel();
-
-        channel.QueueDeclare(queue: "ticket_notifications",
-                             durable: true,
-                             exclusive: false,
-                             autoDelete: false,
-                             arguments: null);
-
-        var json = JsonSerializer.Serialize(message);
-        var body = Encoding.UTF8.GetBytes(json);
-
-        channel.BasicPublish(exchange: "",
-                             routingKey: "ticket_notifications",
-                             basicProperties: null,
-                             body: body);
-    }
-
-    public void Dispose()
-    {
-        // Zamykamy połączenie, gdy aplikacja (API) jest wyłączana
-        _connection?.Close();
-        _connection?.Dispose();
-    }
-}
-
-================================================
-File: WorkerService/Program.cs
-================================================
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.IdentityModel.Tokens;
-using System.Text;
-using WorkerService;
-using WorkerService.Hubs;
-
-var builder = WebApplication.CreateBuilder(args);
-
-// Konfiguracja JWT
-var jwtSettings = builder.Configuration.GetSection("Jwt");
-builder.Services.AddAuthentication(options =>
-{
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-.AddJwtBearer(options =>
-{
-    options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        ValidIssuer = jwtSettings["Issuer"],
-        ValidAudience = jwtSettings["Audience"],
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Key"]!))
-    };
-
-    // SignalR w przeglądarkach wysyła token w QueryStringu
-    options.Events = new JwtBearerEvents
-    {
-        OnMessageReceived = context =>
-        {
-            var accessToken = context.Request.Query["access_token"];
-            var path = context.HttpContext.Request.Path;
-            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/notifications"))
-            {
-                context.Token = accessToken;
-            }
-            return Task.CompletedTask;
-        }
-    };
-});
-
-builder.Services.AddSignalR();
-builder.Services.AddHostedService<Worker>();
-
-// Docelowo w środowisku prod zablokuj to tylko dla URL swojego frontendu!
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowAll", builder =>
-    {
-        builder.SetIsOriginAllowed((host) => true) 
-               .AllowAnyHeader()
-               .AllowAnyMethod()
-               .AllowCredentials(); // SignalR tego wymaga
-    });
-});
-
-var app = builder.Build();
-
-app.UseCors("AllowAll");
-
-// Pamiętaj o middleware do autoryzacji PRZED MapHub
-app.UseAuthentication();
-app.UseAuthorization();
-
-app.MapHub<NotificationHub>("/notifications");
-
-app.Run();
 
 ================================================
 File: docker-compose.yml
@@ -685,6 +394,8 @@ services:
       - RabbitMQ__HostName=rabbitmq
       - Jwt__Key=${JWT_SECRET}
       - ASPNETCORE_ENVIRONMENT=Development
+      # DODANO: Wstrzykujemy listę dozwolonych adresów Frontendowych
+      - AllowedOrigins=http://ticketing-frontend.local;https://mojadomena.pl
     depends_on:
       - rabbitmq
       - main-api
@@ -736,141 +447,6 @@ Thumbs.db
 .dockerignore
 
 ================================================
-File: MainApi/Controllers/TicketsController.cs
-================================================
-using MainApi.Data;
-using MainApi.DTOs;
-using MainApi.Services;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using SharedModels.Entities;
-using SharedModels.Enums;
-using SharedModels.Events;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-
-namespace MainApi.Controllers;
-
-[ApiController]
-[Route("api/[controller]")]
-[Authorize]
-public class TicketsController : ControllerBase
-{
-    private readonly AppDbContext _context;
-    private readonly RabbitMqService _rabbitMqService;
-
-    public TicketsController(AppDbContext context, RabbitMqService rabbitMqService)
-    {
-        _context = context;
-        _rabbitMqService = rabbitMqService;
-    }
-
-    // =========================================================
-    // GET: /api/tickets (Z opcją uwzględnienia zarchiwizowanych)
-    // =========================================================
-    [HttpGet]
-    [Authorize(Roles = nameof(Role.Admin))]
-    public async Task<IActionResult> GetAllTickets([FromQuery] bool includeArchived = false)
-    {
-        var query = _context.Tickets
-            .Include(t => t.Creator)
-            .AsQueryable();
-
-        // Jeśli admin nie chce widzieć zarchiwizowanych, filtrujemy je
-        if (!includeArchived)
-        {
-            query = query.Where(t => !t.IsArchived);
-        }
-
-        var tickets = await query
-            .Select(t => new
-            {
-                t.Id,
-                t.Title,
-                t.Description,
-                t.Status,
-                t.Category,
-                t.IsArchived,
-                t.CreatedAt,
-                CreatorEmail = t.Creator!.Email,
-                CreatorContactInfo = t.Creator.ContactInfo
-            })
-            .OrderByDescending(t => t.CreatedAt)
-            .ToListAsync();
-
-        return Ok(tickets);
-    }
-
-    // =========================================================
-    // POST: /api/tickets (Tworzenie nowego zgłoszenia)
-    // =========================================================
-    [HttpPost]
-    public async Task<IActionResult> CreateTicket([FromBody] CreateTicketRequest request)
-    {
-        var userIdString = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value 
-                        ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-
-        if (string.IsNullOrEmpty(userIdString) || !Guid.TryParse(userIdString, out Guid userId))
-        {
-            return Unauthorized(new { message = "Nie można zidentyfikować użytkownika." });
-        }
-
-        var ticket = new Ticket
-        {
-            Title = request.Title,
-            Description = request.Description,
-            Category = request.Category,
-            CreatorId = userId,
-            IsArchived = false // Nowy ticket nigdy nie jest zarchiwizowany
-        };
-
-        _context.Tickets.Add(ticket);
-        await _context.SaveChangesAsync();
-
-        var userEmail = User.FindFirst(ClaimTypes.Email)?.Value ?? "nieznany@email.com";
-
-        _rabbitMqService.PublishTicketCreatedEvent(new TicketCreatedEvent
-        {
-            TicketId = ticket.Id,
-            Title = ticket.Title,
-            CreatorEmail = userEmail
-        });
-
-        return Ok(new { message = "Zgłoszenie zostało utworzone.", ticketId = ticket.Id });
-    }
-
-    // =========================================================
-    // PATCH: /api/tickets/{id}/status (Zmiana statusu i automatyczna archiwizacja)
-    // =========================================================
-    [HttpPatch("{id:guid}/status")]
-    [Authorize(Roles = nameof(Role.Admin))]
-    public async Task<IActionResult> UpdateTicketStatus(Guid id, [FromBody] UpdateTicketStatusRequest request)
-    {
-        var ticket = await _context.Tickets.FirstOrDefaultAsync(t => t.Id == id);
-        
-        if (ticket == null)
-        {
-            return NotFound(new { message = "Nie znaleziono zgłoszenia." });
-        }
-
-        ticket.Status = request.Status;
-
-        // Logika archiwizacji: Jeśli status to Completed (wartość 1 w Twoim enumie), archiwizujemy
-        // Dostosuj 'TicketStatus.Completed' do nazwy w Twoim enumnie!
-        ticket.IsArchived = (request.Status == TicketStatus.Closed);
-
-        await _context.SaveChangesAsync();
-
-        return Ok(new { 
-            message = "Status zaktualizowany.", 
-            newStatus = ticket.Status,
-            isArchived = ticket.IsArchived
-        });
-    }
-}
-
-================================================
 File: MainApi/DTOs/VerifyTwoFactorRequest.cs
 ================================================
 using System.ComponentModel.DataAnnotations;
@@ -887,87 +463,37 @@ public class VerifyTwoFactorRequest
 }
 
 ================================================
-File: MainApi/Data/DatabaseSeeder.cs
+File: MainApi/Data/AppDbContext.cs
 ================================================
-using SharedModels.Entities;
-using SharedModels.Enums;
-using OtpNet;
+using Microsoft.EntityFrameworkCore;
+using MainApi.Entities;
 
 namespace MainApi.Data;
 
-public static class DatabaseSeeder
+public class AppDbContext : DbContext
 {
-    public static void Seed(AppDbContext context)
+    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
+
+    public DbSet<User> Users { get; set; }
+    public DbSet<Ticket> Tickets { get; set; }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        // Tworzy bazę danych (jeśli nie istnieje) na podstawie Twojego DbContextu
-        context.Database.EnsureCreated(); 
+        base.OnModelCreating(modelBuilder);
 
-        if (!context.Users.Any())
-        {
-            // Generowanie klucza 2FA dla Admina
-            var key = KeyGeneration.GenerateRandomKey(20);
-            var base32Secret = Base32Encoding.ToString(key);
+        // Wymuszenie unikalności adresu Email
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.Email)
+            .IsUnique();
 
-            var admin = new User
-            {
-                Email = "admin@test.com",
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword("Admin123!"),
-                Role = Role.Admin,
-                TwoFactorEnabled = true,
-                TwoFactorSecret = base32Secret,
-                ContactInfo = "Główny Serwer"
-            };
-
-            var employee = new User
-            {
-                Email = "user@test.com",
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword("User123!"),
-                Role = Role.Employee,
-                TwoFactorEnabled = false,
-                ContactInfo = "Biurko 42"
-            };
-
-            context.Users.AddRange(admin, employee);
-            context.SaveChanges();
-
-            // Wypisujemy tajny klucz jawnym tekstem do testów
-            Console.WriteLine("\n==================================================");
-            Console.WriteLine(" DATA SEEDING: Utworzono konta testowe!");
-            Console.WriteLine($" Admin Email: {admin.Email}");
-            Console.WriteLine($" Admin Hasło: Admin123!");
-            Console.WriteLine($" Admin 2FA Secret: {base32Secret}");
-            Console.WriteLine("==================================================\n");
-        }
+        // Konfiguracja relacji bazy danych
+        modelBuilder.Entity<Ticket>()
+            .HasOne(t => t.Creator)
+            .WithMany(u => u.Tickets)
+            .HasForeignKey(t => t.CreatorId)
+            .OnDelete(DeleteBehavior.Restrict); // Zapobiega kaskadowemu usunięciu ticketów przy usunięciu użytkownika
     }
 }
-
-================================================
-File: MainApi/MainApi.csproj
-================================================
-<Project Sdk="Microsoft.NET.Sdk.Web">
-
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-  </PropertyGroup>
-
-  <ItemGroup>
-    <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.27" />
-    <PackageReference Include="Otp.NET" Version="1.4.1" />
-    <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="9.0.0" />
-    <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\SharedModels\SharedModels.csproj" />
-  </ItemGroup>
-
-</Project>
-
 
 ================================================
 File: MainApi/Program.cs
@@ -1107,6 +633,404 @@ app.MapControllers();
 app.Run();
 
 ================================================
+File: SharedModels/Enums/TicketCategory.cs
+================================================
+namespace SharedModels.Enums;
+
+public enum TicketCategory 
+{ 
+    Hardware, 
+    Software 
+}
+
+================================================
+File: SharedModels/Events/TicketCreatedEvent.cs
+================================================
+namespace SharedModels.Events;
+
+public class TicketCreatedEvent
+{
+    public Guid TicketId { get; set; } // <-- ZMIANA Z int NA Guid
+    public string Title { get; set; } = string.Empty;
+    public string CreatorEmail { get; set; } = string.Empty;
+}
+
+================================================
+File: WorkerService/Worker.cs
+================================================
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.SignalR;
+using RabbitMQ.Client;
+using RabbitMQ.Client.Events;
+using SharedModels.Events;
+using WorkerService.Hubs;
+
+namespace WorkerService;
+
+public class Worker : BackgroundService
+{
+    private readonly ILogger<Worker> _logger;
+    private readonly IHubContext<NotificationHub> _hubContext;
+    private readonly IConfiguration _configuration;
+    private IConnection _connection = null!;
+    private IModel _channel = null!;
+
+    public Worker(ILogger<Worker> logger, IHubContext<NotificationHub> hubContext, IConfiguration configuration)
+    {
+        _logger = logger;
+        _hubContext = hubContext;
+        _configuration = configuration;
+        InitRabbitMQ();
+    }
+
+    private void InitRabbitMQ()
+    {
+        var rabbitHost = _configuration["RabbitMQ:HostName"] ?? "localhost";
+        
+        var factory = new ConnectionFactory { HostName = rabbitHost, DispatchConsumersAsync = true };
+        _connection = factory.CreateConnection();
+        _channel = _connection.CreateModel();
+
+        _channel.QueueDeclare(queue: "ticket_notifications",
+                             durable: true,
+                             exclusive: false,
+                             autoDelete: false,
+                             arguments: null);
+
+        _logger.LogInformation($"[Worker] RabbitMQ Host: {rabbitHost} | Oczekuję na wiadomości...");
+    }
+
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        stoppingToken.ThrowIfCancellationRequested();
+
+        var consumer = new AsyncEventingBasicConsumer(_channel);
+        
+        // Logika asynchronicznego odbierania wiadomości
+        consumer.Received += async (model, ea) =>
+        {
+            try
+            {
+                var body = ea.Body.ToArray();
+                var message = Encoding.UTF8.GetString(body);
+                
+                // 1. Bezpieczna deserializacja
+                var ticketEvent = JsonSerializer.Deserialize<TicketCreatedEvent>(message);
+
+                _logger.LogInformation($"Odebrano nowy ticket: {ticketEvent?.TicketId}. Przesyłam do Adminów...");
+                
+                if (ticketEvent != null)
+                {
+                    // 2. Próba wysyłki przez SignalR (też może rzucić wyjątkiem przy zerwanym sieci)
+                    await _hubContext.Clients.Group("AdminsGroup").SendAsync("ReceiveNewTicket", ticketEvent);
+                }
+
+                // 3. Pełen sukces - potwierdzamy RabbitMQ, że wiadomość została przetworzona (usunięcie z kolejki)
+                _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+            }
+            catch (Exception ex)
+            {
+                // Łapiemy błędy deserializacji JSON, błędy SignalR i inne nieprzewidziane wyjątki
+                _logger.LogError(ex, "Krytyczny błąd podczas przetwarzania wiadomości z RabbitMQ. Wiadomość zostanie odrzucona.");
+                
+                // Odrzucamy wiadomość BEZ ponownego wrzucania na kolejkę (requeue: false),
+                // żeby uniknąć nieskończonej pętli przetwarzania tzw. "Poison Message".
+                _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: false);
+            }
+        };
+
+        _channel.BasicConsume(queue: "ticket_notifications", autoAck: false, consumer: consumer);
+
+        return Task.CompletedTask;
+    }
+
+    public override void Dispose()
+    {
+        // Dobrą praktyką jest również jawne wywołanie Dispose() dla kanałów i połączeń
+        _channel?.Close();
+        _channel?.Dispose();
+        
+        _connection?.Close();
+        _connection?.Dispose();
+        
+        base.Dispose();
+    }
+}
+
+================================================
+File: WorkerService/WorkerService.csproj
+================================================
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharedModels\SharedModels.csproj" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
+  </ItemGroup>
+  
+</Project>
+
+================================================
+File: SharedModels/Enums/Role.cs
+================================================
+namespace SharedModels.Enums;
+
+public enum Role 
+{ 
+    Admin, 
+    Employee 
+}
+
+================================================
+File: MainApi/Controllers/TicketsController.cs
+================================================
+using MainApi.Data;
+using MainApi.DTOs;
+using MainApi.Services;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using MainApi.Entities;
+using SharedModels.Enums;
+using SharedModels.Events;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+
+namespace MainApi.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+[Authorize]
+public class TicketsController : ControllerBase
+{
+    private readonly AppDbContext _context;
+    private readonly RabbitMqService _rabbitMqService;
+
+    public TicketsController(AppDbContext context, RabbitMqService rabbitMqService)
+    {
+        _context = context;
+        _rabbitMqService = rabbitMqService;
+    }
+
+    // =========================================================
+    // GET: /api/tickets (Z opcją uwzględnienia zarchiwizowanych)
+    // =========================================================
+    [HttpGet]
+    [Authorize(Roles = nameof(Role.Admin))]
+    public async Task<IActionResult> GetAllTickets([FromQuery] bool includeArchived = false)
+    {
+        var query = _context.Tickets
+            .Include(t => t.Creator)
+            .AsQueryable();
+
+        // Jeśli admin nie chce widzieć zarchiwizowanych, filtrujemy je
+        if (!includeArchived)
+        {
+            query = query.Where(t => !t.IsArchived);
+        }
+
+        var tickets = await query
+            .Select(t => new
+            {
+                t.Id,
+                t.Title,
+                t.Description,
+                t.Status,
+                t.Category,
+                t.IsArchived,
+                t.CreatedAt,
+                CreatorEmail = t.Creator!.Email,
+                CreatorContactInfo = t.Creator.ContactInfo
+            })
+            .OrderByDescending(t => t.CreatedAt)
+            .ToListAsync();
+
+        return Ok(tickets);
+    }
+
+    // =========================================================
+    // POST: /api/tickets (Tworzenie nowego zgłoszenia)
+    // =========================================================
+    [HttpPost]
+    public async Task<IActionResult> CreateTicket([FromBody] CreateTicketRequest request)
+    {
+        var userIdString = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value 
+                        ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+        if (string.IsNullOrEmpty(userIdString) || !Guid.TryParse(userIdString, out Guid userId))
+        {
+            return Unauthorized(new { message = "Nie można zidentyfikować użytkownika." });
+        }
+
+        var ticket = new Ticket
+        {
+            Title = request.Title,
+            Description = request.Description,
+            Category = request.Category,
+            CreatorId = userId,
+            IsArchived = false // Nowy ticket nigdy nie jest zarchiwizowany
+        };
+
+        _context.Tickets.Add(ticket);
+        await _context.SaveChangesAsync();
+
+        var userEmail = User.FindFirst(ClaimTypes.Email)?.Value ?? "nieznany@email.com";
+
+        _rabbitMqService.PublishTicketCreatedEvent(new TicketCreatedEvent
+        {
+            TicketId = ticket.Id,
+            Title = ticket.Title,
+            CreatorEmail = userEmail
+        });
+
+        return Ok(new { message = "Zgłoszenie zostało utworzone.", ticketId = ticket.Id });
+    }
+
+    // =========================================================
+    // PATCH: /api/tickets/{id}/status (Zmiana statusu i automatyczna archiwizacja)
+    // =========================================================
+    [HttpPatch("{id:guid}/status")]
+    [Authorize(Roles = nameof(Role.Admin))]
+    public async Task<IActionResult> UpdateTicketStatus(Guid id, [FromBody] UpdateTicketStatusRequest request)
+    {
+        var ticket = await _context.Tickets.FirstOrDefaultAsync(t => t.Id == id);
+        
+        if (ticket == null)
+        {
+            return NotFound(new { message = "Nie znaleziono zgłoszenia." });
+        }
+
+        ticket.Status = request.Status;
+
+        // Logika archiwizacji: Jeśli status to Completed (wartość 1 w Twoim enumie), archiwizujemy
+        // Dostosuj 'TicketStatus.Completed' do nazwy w Twoim enumnie!
+        ticket.IsArchived = (request.Status == TicketStatus.Closed);
+
+        await _context.SaveChangesAsync();
+
+        return Ok(new { 
+            message = "Status zaktualizowany.", 
+            newStatus = ticket.Status,
+            isArchived = ticket.IsArchived
+        });
+    }
+}
+
+================================================
+File: MainApi/Entities/Ticket.cs
+================================================
+using System.ComponentModel.DataAnnotations;
+using SharedModels.Enums;
+
+namespace MainApi.Entities;
+
+public class Ticket
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    [Required]
+    public string Title { get; set; } = string.Empty;
+
+    [Required]
+    public string Description { get; set; } = string.Empty;
+
+    public TicketStatus Status { get; set; } = TicketStatus.New;
+    public TicketCategory Category { get; set; }
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    // Klucz obcy i właściwość nawigacyjna do twórcy zgłoszenia
+    public Guid CreatorId { get; set; }
+    public User? Creator { get; set; }
+    // Dodaj tę linijkę w klasie Ticket:
+    public bool IsArchived { get; set; } = false;
+}
+
+================================================
+File: MainApi/MainApi.csproj
+================================================
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.27" />
+    <PackageReference Include="Otp.NET" Version="1.4.1" />
+    <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="9.0.0" />
+    <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharedModels\SharedModels.csproj" />
+  </ItemGroup>
+
+</Project>
+
+
+================================================
+File: MainApi/Properties/launchSettings.json
+================================================
+﻿{
+  "$schema": "http://json.schemastore.org/launchsettings.json",
+  "iisSettings": {
+    "windowsAuthentication": false,
+    "anonymousAuthentication": true,
+    "iisExpress": {
+      "applicationUrl": "http://localhost:28845",
+      "sslPort": 44396
+    }
+  },
+  "profiles": {
+    "http": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "launchUrl": "swagger",
+      "applicationUrl": "http://localhost:5038",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    },
+    "https": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "launchUrl": "swagger",
+      "applicationUrl": "https://localhost:7047;http://localhost:5038",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    },
+    "IIS Express": {
+      "commandName": "IISExpress",
+      "launchBrowser": true,
+      "launchUrl": "swagger",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}
+
+
+================================================
 File: MainApi/Services/TokenService.cs
 ================================================
 using Microsoft.IdentityModel.Tokens;
@@ -1153,124 +1077,249 @@ public class TokenService
 }
 
 ================================================
-File: SharedModels/SharedModels.csproj
+File: SharedModels/Enums/TicketStatus.cs
 ================================================
-﻿<Project Sdk="Microsoft.NET.Sdk">
+namespace SharedModels.Enums;
 
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
-
-</Project>
-
+public enum TicketStatus 
+{ 
+    New, 
+    InProgress, 
+    Resolved, 
+    Closed 
+}
 
 ================================================
-File: WorkerService/Worker.cs
+File: WorkerService/Program.cs
 ================================================
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
 using System.Text;
-using System.Text.Json;
-using Microsoft.AspNetCore.SignalR;
-using RabbitMQ.Client;
-using RabbitMQ.Client.Events;
-using SharedModels.Events;
+using WorkerService;
 using WorkerService.Hubs;
 
-namespace WorkerService;
+var builder = WebApplication.CreateBuilder(args);
 
-public class Worker : BackgroundService
+// ====================================================================
+// KONFIGURACJA JWT
+// ====================================================================
+var jwtSettings = builder.Configuration.GetSection("Jwt");
+builder.Services.AddAuthentication(options =>
 {
-    private readonly ILogger<Worker> _logger;
-    private readonly IHubContext<NotificationHub> _hubContext;
-    private readonly IConfiguration _configuration;
-    
-    private IConnection _connection = null!;
-    private IModel _channel = null!;
-
-    public Worker(ILogger<Worker> logger, IHubContext<NotificationHub> hubContext, IConfiguration configuration)
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
     {
-        _logger = logger;
-        _hubContext = hubContext;
-        _configuration = configuration;
-        InitRabbitMQ();
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwtSettings["Issuer"],
+        ValidAudience = jwtSettings["Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Key"]!))
+    };
+
+    // SignalR w przeglądarkach wysyła token w QueryStringu (WebSockets nie obsługują nagłówków Authorization w przeglądarce)
+    options.Events = new JwtBearerEvents
+    {
+        OnMessageReceived = context =>
+        {
+            var accessToken = context.Request.Query["access_token"];
+            var path = context.HttpContext.Request.Path;
+            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/notifications"))
+            {
+                context.Token = accessToken;
+            }
+            return Task.CompletedTask;
+        }
+    };
+});
+
+// ====================================================================
+// REJESTRACJA SERWISÓW
+// ====================================================================
+builder.Services.AddSignalR();
+builder.Services.AddHostedService<Worker>();
+
+// --- KONFIGURACJA CORS ---
+var allowedOriginsRaw = builder.Configuration["AllowedOrigins"];
+var allowedOrigins = string.IsNullOrEmpty(allowedOriginsRaw) 
+    ? Array.Empty<string>() 
+    : allowedOriginsRaw.Split(';');
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("FrontendPolicy", policy =>
+    {
+        if (allowedOrigins.Length > 0)
+        {
+            policy.WithOrigins(allowedOrigins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials(); // SignalR bezwzględnie tego wymaga!
+        }
+        else
+        {
+            // Fallback na środowisko lokalne
+            policy.SetIsOriginAllowed((host) => true) 
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials(); 
+        }
+    });
+});
+
+var app = builder.Build();
+
+// ====================================================================
+// KONFIGURACJA POTOKU HTTP (Middleware)
+// ====================================================================
+app.UseCors("FrontendPolicy"); // Używamy naszej nowej, bezpiecznej polityki
+
+// Autoryzacja MUSI być przed MapHub!
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapHub<NotificationHub>("/notifications");
+
+app.Run();
+
+================================================
+File: MainApi/DTOs/CreateTicketRequest.cs
+================================================
+using SharedModels.Enums;
+using System.ComponentModel.DataAnnotations;
+
+namespace MainApi.DTOs;
+
+public class CreateTicketRequest
+{
+    [Required]
+    public string Title { get; set; } = string.Empty;
+
+    [Required]
+    public string Description { get; set; } = string.Empty;
+
+    [Required]
+    public TicketCategory Category { get; set; }
+}
+
+================================================
+File: MainApi/Entities/User.cs
+================================================
+using System.ComponentModel.DataAnnotations;
+using SharedModels.Enums;
+
+namespace MainApi.Entities;
+
+public class User
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    [Required, EmailAddress]
+    public string Email { get; set; } = string.Empty;
+
+    [Required]
+    public string PasswordHash { get; set; } = string.Empty;
+
+    public Role Role { get; set; }
+
+    public bool TwoFactorEnabled { get; set; }
+    public string? TwoFactorSecret { get; set; }
+
+    public string? ContactInfo { get; set; }
+
+    // Relacja 1 do wielu (Jeden użytkownik może mieć wiele zgłoszeń)
+    public ICollection<Ticket> Tickets { get; set; } = new List<Ticket>();
+}
+
+================================================
+File: MainApi/Services/RabbitMqService.cs
+================================================
+using RabbitMQ.Client;
+using System.Text;
+using System.Text.Json;
+
+namespace MainApi.Services;
+
+public class RabbitMqService : IDisposable
+{
+    private readonly IConnection _connection;
+
+    public RabbitMqService(IConfiguration configuration)
+    {
+        // Czytamy hosta z konfiguracji, by Docker mógł to łatwo nadpisać
+        var host = configuration["RabbitMQ:HostName"] ?? "localhost";
+        var factory = new ConnectionFactory() { HostName = host };
+        
+        // Ustanawiamy JEDNO globalne połączenie dla całego cyklu życia API
+        _connection = factory.CreateConnection();
     }
 
-    private void InitRabbitMQ()
+    public void PublishTicketCreatedEvent<T>(T message)
     {
-        var rabbitHost = _configuration["RabbitMQ:HostName"] ?? "localhost";
-        
-        var factory = new ConnectionFactory { HostName = rabbitHost, DispatchConsumersAsync = true };
-        _connection = factory.CreateConnection();
-        _channel = _connection.CreateModel();
+        // Kanały (Channels) są lekkie - otwieramy je per publikacja (nie są thread-safe)
+        using var channel = _connection.CreateModel();
 
-        _channel.QueueDeclare(queue: "ticket_notifications",
+        channel.QueueDeclare(queue: "ticket_notifications",
                              durable: true,
                              exclusive: false,
                              autoDelete: false,
                              arguments: null);
-                             
-        _logger.LogInformation($"[Worker] RabbitMQ Host: {rabbitHost} | Oczekuję na wiadomości...");
+
+        var json = JsonSerializer.Serialize(message);
+        var body = Encoding.UTF8.GetBytes(json);
+
+        channel.BasicPublish(exchange: "",
+                             routingKey: "ticket_notifications",
+                             basicProperties: null,
+                             body: body);
     }
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    public void Dispose()
     {
-        stoppingToken.ThrowIfCancellationRequested();
-
-        var consumer = new AsyncEventingBasicConsumer(_channel);
-        consumer.Received += async (model, ea) =>
-        {
-            var body = ea.Body.ToArray();
-            var message = Encoding.UTF8.GetString(body);
-            var ticketEvent = JsonSerializer.Deserialize<TicketCreatedEvent>(message);
-
-            _logger.LogInformation($"Odebrano nowy ticket: {ticketEvent?.TicketId}. Przesyłam do Adminów...");
-            
-            if (ticketEvent != null)
-            {
-                await _hubContext.Clients.Group("AdminsGroup").SendAsync("ReceiveNewTicket", ticketEvent);
-            }
-
-            _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
-        };
-
-        _channel.BasicConsume(queue: "ticket_notifications", autoAck: false, consumer: consumer);
-
-        return Task.CompletedTask;
-    }
-
-    public override void Dispose()
-    {
-        _channel?.Close();
+        // Zamykamy połączenie, gdy aplikacja (API) jest wyłączana
         _connection?.Close();
-        base.Dispose();
+        _connection?.Dispose();
     }
 }
 
 ================================================
-File: WorkerService/WorkerService.csproj
+File: WorkerService/Properties/launchSettings.json
 ================================================
-<Project Sdk="Microsoft.NET.Sdk.Web">
-  
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
+﻿{
+  "$schema": "http://json.schemastore.org/launchsettings.json",
+  "profiles": {
+    "WorkerService": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}
 
-  <ItemGroup>
-    <ProjectReference Include="..\SharedModels\SharedModels.csproj" />
-  </ItemGroup>
-  
-  <ItemGroup>
-    <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
-  </ItemGroup>
-  
-</Project>
 
 ================================================
 File: output.txt
 ================================================
 
+
+================================================
+File: MainApi/DTOs/UpdateTicketStatusRequest.cs
+================================================
+using SharedModels.Enums;
+using System.ComponentModel.DataAnnotations;
+
+namespace MainApi.DTOs;
+
+public class UpdateTicketStatusRequest
+{
+    [Required]
+    public TicketStatus Status { get; set; } // Zwróć uwagę na nazwę swojego enuma, jeśli masz inną
+}
 
