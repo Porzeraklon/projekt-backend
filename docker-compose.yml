@@ -1,0 +1,15 @@
+services:
+  mariadb:
+    image: mariadb:lts
+    container_name: ticketing-mariadb
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: Q!@3wertyuiop
+      MYSQL_DATABASE: ticketing_db
+    ports:
+      - "3307:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+
+volumes:
+  mariadb_data:

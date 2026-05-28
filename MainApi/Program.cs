@@ -1,4 +1,5 @@
 using MainApi.Data;
+using MainApi.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -34,15 +35,30 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
+// ====================================================================
+// REJESTRACJA SERWISÓW (Zawsze przed builder.Build()!)
+// ====================================================================
+builder.Services.AddScoped<TokenService>();
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// --- ZAMKNIĘCIE I ZBUDOWANIE APLIKACJI ---
 var app = builder.Build();
 
-// Rejestracja serwisów
-builder.Services.AddScoped<MainApi.Services.TokenService>();
+// ====================================================================
+// DATA SEEDING (Wykorzystuje zbudowaną aplikację, więc musi być po Build())
+// ====================================================================
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    DatabaseSeeder.Seed(dbContext);
+}
 
+// ====================================================================
+// KONFIGURACJA POTOKU HTTP (Middleware)
+// ====================================================================
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -51,7 +67,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-// 3. MIDDLEWARE: Kolejność jest absolutnie kluczowa!
+// MIDDLEWARE: Kolejność jest absolutnie kluczowa!
 app.UseAuthentication(); // Najpierw sprawdzamy KIM jest użytkownik
 app.UseAuthorization();  // Potem sprawdzamy, CO MOŻE zrobić
 

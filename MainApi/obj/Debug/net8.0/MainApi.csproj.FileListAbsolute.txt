@@ -28,6 +28,7 @@
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.IdentityModel.Tokens.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.OpenApi.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/MySqlConnector.dll
+/home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Otp.NET.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Pomelo.EntityFrameworkCore.MySql.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Swashbuckle.AspNetCore.Swagger.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Swashbuckle.AspNetCore.SwaggerGen.dll
