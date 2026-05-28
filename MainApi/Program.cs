@@ -10,7 +10,11 @@ var builder = WebApplication.CreateBuilder(args);
 // 1. Baza Danych
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
+    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString), 
+        mySqlOptions => mySqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 5, 
+            maxRetryDelay: TimeSpan.FromSeconds(5), 
+            errorNumbersToAdd: null)));
 
 // 2. KONFIGURACJA JWT
 var jwtSettings = builder.Configuration.GetSection("Jwt");
