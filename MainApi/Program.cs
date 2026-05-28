@@ -15,7 +15,6 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // 2. KONFIGURACJA JWT
 var jwtSettings = builder.Configuration.GetSection("Jwt");
 var secretKey = jwtSettings["Key"]!;
-
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -38,6 +37,36 @@ builder.Services.AddAuthentication(options =>
 // ====================================================================
 // REJESTRACJA SERWISÓW (Zawsze przed builder.Build()!)
 // ====================================================================
+
+// --- KONFIGURACJA CORS ---
+// Pobieramy adresy z konfiguracji (np. appsettings.json lub zmiennych środowiskowych Dockera)
+var allowedOriginsRaw = builder.Configuration["AllowedOrigins"];
+var allowedOrigins = string.IsNullOrEmpty(allowedOriginsRaw) 
+    ? Array.Empty<string>() 
+    : allowedOriginsRaw.Split(';');
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("FrontendPolicy", policy =>
+    {
+        if (allowedOrigins.Length > 0)
+        {
+            policy.WithOrigins(allowedOrigins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        }
+        else
+        {
+            // Fallback (np. w środowisku lokalnym, jeśli brakuje zmiennej)
+            policy.SetIsOriginAllowed(_ => true)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials();
+        }
+    });
+});
+
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddSingleton<MainApi.Services.RabbitMqService>();
 
@@ -74,7 +103,7 @@ builder.Services.AddSwaggerGen(c =>
 var app = builder.Build();
 
 // ====================================================================
-// DATA SEEDING (Wykorzystuje zbudowaną aplikację, więc musi być po Build())
+// DATA SEEDING
 // ====================================================================
 using (var scope = app.Services.CreateScope())
 {
@@ -94,8 +123,10 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 // MIDDLEWARE: Kolejność jest absolutnie kluczowa!
-app.UseAuthentication(); // Najpierw sprawdzamy KIM jest użytkownik
-app.UseAuthorization();  // Potem sprawdzamy, CO MOŻE zrobić
+app.UseCors("FrontendPolicy");
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
 

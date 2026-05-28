@@ -35,6 +35,7 @@ services:
       - RabbitMQ__HostName=rabbitmq
       - Jwt__Key=${JWT_SECRET}
       - ASPNETCORE_ENVIRONMENT=Development
+      - AllowedOrigins=http://ticketing-frontend.local;https://mojadomena.pl
     depends_on:
       - mariadb
       - rabbitmq
