@@ -39,7 +39,7 @@ builder.Services.AddAuthentication(options =>
 // REJESTRACJA SERWISÓW (Zawsze przed builder.Build()!)
 // ====================================================================
 builder.Services.AddScoped<TokenService>();
-builder.Services.AddScoped<MainApi.Services.RabbitMqService>();
+builder.Services.AddSingleton<MainApi.Services.RabbitMqService>();
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();

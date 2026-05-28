@@ -11,23 +11,25 @@ namespace WorkerService;
 public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
-    private readonly IHubContext<NotificationHub> _hubContext; // <-- Dodajemy SignalR
+    private readonly IHubContext<NotificationHub> _hubContext;
+    private readonly IConfiguration _configuration;
+    
     private IConnection _connection = null!;
     private IModel _channel = null!;
 
-    // Wstrzykujemy HubContext do przesyłania wiadomości przez WebSockety
-    public Worker(ILogger<Worker> logger, IHubContext<NotificationHub> hubContext)
+    public Worker(ILogger<Worker> logger, IHubContext<NotificationHub> hubContext, IConfiguration configuration)
     {
         _logger = logger;
         _hubContext = hubContext;
+        _configuration = configuration;
         InitRabbitMQ();
     }
 
     private void InitRabbitMQ()
     {
-        // Kluczowe: ustawiamy DispatchConsumersAsync = true dla asynchronicznego SignalR
-        var factory = new ConnectionFactory { HostName = "localhost", DispatchConsumersAsync = true };
+        var rabbitHost = _configuration["RabbitMQ:HostName"] ?? "localhost";
         
+        var factory = new ConnectionFactory { HostName = rabbitHost, DispatchConsumersAsync = true };
         _connection = factory.CreateConnection();
         _channel = _connection.CreateModel();
 
@@ -37,37 +39,31 @@ public class Worker : BackgroundService
                              autoDelete: false,
                              arguments: null);
                              
-        _logger.LogInformation("Podłączono do RabbitMQ. Nasłuchiwanie kolejki 'ticket_notifications'...");
+        _logger.LogInformation($"[Worker] RabbitMQ Host: {rabbitHost} | Oczekuję na wiadomości...");
     }
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
         stoppingToken.ThrowIfCancellationRequested();
 
-        // Używamy Asynchronicznego konsumenta, żeby prawidłowo await-ować WebSockety
         var consumer = new AsyncEventingBasicConsumer(_channel);
-        
         consumer.Received += async (model, ea) =>
         {
             var body = ea.Body.ToArray();
             var message = Encoding.UTF8.GetString(body);
             var ticketEvent = JsonSerializer.Deserialize<TicketCreatedEvent>(message);
 
-            _logger.LogInformation($"[RABBITMQ -> WEBSOCKET] Przesyłam powiadomienie o tickecie {ticketEvent?.TicketId}...");
-
-            // MAGIA WEBSOCKETÓW: Wysyłamy powiadomienie do wszystkich podłączonych klientów
+            _logger.LogInformation($"Odebrano nowy ticket: {ticketEvent?.TicketId}. Przesyłam do Adminów...");
+            
             if (ticketEvent != null)
             {
-                await _hubContext.Clients.All.SendAsync("ReceiveNewTicket", ticketEvent);
+                await _hubContext.Clients.Group("AdminsGroup").SendAsync("ReceiveNewTicket", ticketEvent);
             }
 
-            // Potwierdzamy Królikowi usunięcie wiadomości
             _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
         };
 
-        _channel.BasicConsume(queue: "ticket_notifications",
-                             autoAck: false, 
-                             consumer: consumer);
+        _channel.BasicConsume(queue: "ticket_notifications", autoAck: false, consumer: consumer);
 
         return Task.CompletedTask;
     }

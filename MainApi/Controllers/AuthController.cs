@@ -31,12 +31,26 @@ public class AuthController : ControllerBase
         }
 
         // Zgodnie ze specyfikacją: Admin ma bezwzględny obowiązek korzystania z 2FA
-        if (user.Role == SharedModels.Enums.Role.Admin && user.TwoFactorEnabled)
+        if (user.Role == SharedModels.Enums.Role.Admin)
         {
-            return Ok(new { 
-                requires2FA = true, 
-                message = "Wymagana weryfikacja 2FA. Przejdź do endpointu /api/auth/verify-2fa" 
-            });
+            if (user.TwoFactorEnabled)
+            {
+                // Admin ma już 2FA, prosimy o kod weryfikacyjny
+                return Ok(new { 
+                    requires2FA = true, 
+                    message = "Wymagana weryfikacja 2FA. Przejdź do endpointu /api/auth/verify-2fa" 
+                });
+            }
+            else
+            {
+                // Wymuszenie konfiguracji 2FA dla nowego Admina
+                // Przesyłamy Secret do frontendu, by Vue mogło wygenerować kod QR
+                return Ok(new {
+                    requires2FASetup = true,
+                    message = "Wymagana konfiguracja 2FA. Zeskanuj kod QR w aplikacji Authenticator.",
+                    secretKey = user.TwoFactorSecret
+                });
+            }
         }
 
         // Dla zwykłych pracowników od razu generujemy token
