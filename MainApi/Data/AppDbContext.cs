@@ -1,5 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using SharedModels.Entities;
+using MainApi.Entities;
 
 namespace MainApi.Data;
 

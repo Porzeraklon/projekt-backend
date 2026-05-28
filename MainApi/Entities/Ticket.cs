@@ -1,7 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using SharedModels.Enums;
 
-namespace SharedModels.Entities;
+namespace MainApi.Entities;
 
 public class Ticket
 {

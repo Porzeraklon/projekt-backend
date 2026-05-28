@@ -1,0 +1,39 @@
+# =========================
+# Zmienne środowiskowe i sekrety
+# =========================
+.env
+.env.*
+!.env.example
+appsettings.Development.json
+*.user
+
+# =========================
+# .NET / C#
+# =========================
+# Foldery z wynikiem kompilacji i plikami tymczasowymi
+bin/
+obj/
+TestResults/
+*.DotSettings.user
+
+# =========================
+# Pliki systemowe i tymczasowe (Linux / Edytory terminalowe)
+# =========================
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# =========================
+# IDE i narzędzia (na wypadek współpracy)
+# =========================
+.vscode/
+.vs/
+.idea/
+*.sln.user
+
+# =========================
+# Docker
+# =========================
+.dockerignore
