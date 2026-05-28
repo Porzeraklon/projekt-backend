@@ -120,7 +120,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+//app.UseHttpsRedirection();
 
 // MIDDLEWARE: Kolejność jest absolutnie kluczowa!
 app.UseCors("FrontendPolicy");
