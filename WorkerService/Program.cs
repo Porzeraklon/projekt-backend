@@ -6,7 +6,9 @@ using WorkerService.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Konfiguracja JWT
+// ====================================================================
+// KONFIGURACJA JWT
+// ====================================================================
 var jwtSettings = builder.Configuration.GetSection("Jwt");
 builder.Services.AddAuthentication(options =>
 {
@@ -26,7 +28,7 @@ builder.Services.AddAuthentication(options =>
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Key"]!))
     };
 
-    // SignalR w przeglądarkach wysyła token w QueryStringu
+    // SignalR w przeglądarkach wysyła token w QueryStringu (WebSockets nie obsługują nagłówków Authorization w przeglądarce)
     options.Events = new JwtBearerEvents
     {
         OnMessageReceived = context =>
@@ -42,26 +44,48 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
+// ====================================================================
+// REJESTRACJA SERWISÓW
+// ====================================================================
 builder.Services.AddSignalR();
 builder.Services.AddHostedService<Worker>();
 
-// Docelowo w środowisku prod zablokuj to tylko dla URL swojego frontendu!
+// --- KONFIGURACJA CORS ---
+var allowedOriginsRaw = builder.Configuration["AllowedOrigins"];
+var allowedOrigins = string.IsNullOrEmpty(allowedOriginsRaw) 
+    ? Array.Empty<string>() 
+    : allowedOriginsRaw.Split(';');
+
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", builder =>
+    options.AddPolicy("FrontendPolicy", policy =>
     {
-        builder.SetIsOriginAllowed((host) => true) 
-               .AllowAnyHeader()
-               .AllowAnyMethod()
-               .AllowCredentials(); // SignalR tego wymaga
+        if (allowedOrigins.Length > 0)
+        {
+            policy.WithOrigins(allowedOrigins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials(); // SignalR bezwzględnie tego wymaga!
+        }
+        else
+        {
+            // Fallback na środowisko lokalne
+            policy.SetIsOriginAllowed((host) => true) 
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials(); 
+        }
     });
 });
 
 var app = builder.Build();
 
-app.UseCors("AllowAll");
+// ====================================================================
+// KONFIGURACJA POTOKU HTTP (Middleware)
+// ====================================================================
+app.UseCors("FrontendPolicy"); // Używamy naszej nowej, bezpiecznej polityki
 
-// Pamiętaj o middleware do autoryzacji PRZED MapHub
+// Autoryzacja MUSI być przed MapHub!
 app.UseAuthentication();
 app.UseAuthorization();
 

@@ -13,7 +13,6 @@ public class Worker : BackgroundService
     private readonly ILogger<Worker> _logger;
     private readonly IHubContext<NotificationHub> _hubContext;
     private readonly IConfiguration _configuration;
-    
     private IConnection _connection = null!;
     private IModel _channel = null!;
 
@@ -38,7 +37,7 @@ public class Worker : BackgroundService
                              exclusive: false,
                              autoDelete: false,
                              arguments: null);
-                             
+
         _logger.LogInformation($"[Worker] RabbitMQ Host: {rabbitHost} | Oczekuję na wiadomości...");
     }
 
@@ -47,20 +46,38 @@ public class Worker : BackgroundService
         stoppingToken.ThrowIfCancellationRequested();
 
         var consumer = new AsyncEventingBasicConsumer(_channel);
+        
+        // Logika asynchronicznego odbierania wiadomości
         consumer.Received += async (model, ea) =>
         {
-            var body = ea.Body.ToArray();
-            var message = Encoding.UTF8.GetString(body);
-            var ticketEvent = JsonSerializer.Deserialize<TicketCreatedEvent>(message);
-
-            _logger.LogInformation($"Odebrano nowy ticket: {ticketEvent?.TicketId}. Przesyłam do Adminów...");
-            
-            if (ticketEvent != null)
+            try
             {
-                await _hubContext.Clients.Group("AdminsGroup").SendAsync("ReceiveNewTicket", ticketEvent);
-            }
+                var body = ea.Body.ToArray();
+                var message = Encoding.UTF8.GetString(body);
+                
+                // 1. Bezpieczna deserializacja
+                var ticketEvent = JsonSerializer.Deserialize<TicketCreatedEvent>(message);
 
-            _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                _logger.LogInformation($"Odebrano nowy ticket: {ticketEvent?.TicketId}. Przesyłam do Adminów...");
+                
+                if (ticketEvent != null)
+                {
+                    // 2. Próba wysyłki przez SignalR (też może rzucić wyjątkiem przy zerwanym sieci)
+                    await _hubContext.Clients.Group("AdminsGroup").SendAsync("ReceiveNewTicket", ticketEvent);
+                }
+
+                // 3. Pełen sukces - potwierdzamy RabbitMQ, że wiadomość została przetworzona (usunięcie z kolejki)
+                _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+            }
+            catch (Exception ex)
+            {
+                // Łapiemy błędy deserializacji JSON, błędy SignalR i inne nieprzewidziane wyjątki
+                _logger.LogError(ex, "Krytyczny błąd podczas przetwarzania wiadomości z RabbitMQ. Wiadomość zostanie odrzucona.");
+                
+                // Odrzucamy wiadomość BEZ ponownego wrzucania na kolejkę (requeue: false),
+                // żeby uniknąć nieskończonej pętli przetwarzania tzw. "Poison Message".
+                _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: false);
+            }
         };
 
         _channel.BasicConsume(queue: "ticket_notifications", autoAck: false, consumer: consumer);
@@ -70,8 +87,13 @@ public class Worker : BackgroundService
 
     public override void Dispose()
     {
+        // Dobrą praktyką jest również jawne wywołanie Dispose() dla kanałów i połączeń
         _channel?.Close();
+        _channel?.Dispose();
+        
         _connection?.Close();
+        _connection?.Dispose();
+        
         base.Dispose();
     }
 }

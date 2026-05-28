@@ -51,6 +51,8 @@ services:
       - RabbitMQ__HostName=rabbitmq
       - Jwt__Key=${JWT_SECRET}
       - ASPNETCORE_ENVIRONMENT=Development
+      # DODANO: Wstrzykujemy listę dozwolonych adresów Frontendowych
+      - AllowedOrigins=http://ticketing-frontend.local;https://mojadomena.pl
     depends_on:
       - rabbitmq
       - main-api
