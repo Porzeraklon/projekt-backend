@@ -169,12 +169,33 @@ public class UsersController : ControllerBase
             return NotFound(new { message = "Nie znaleziono użytkownika." });
         }
 
-        // Zabezpieczenie: Admin nie powinien móc usunąć samego siebie
-        // (Można to opcjonalnie wyciągnąć z tokenu claims, ale podstawowe sprawdzenie chroni przed prostymi błędami w UI)
+        // Zabezpieczenie: Admin nie może usunąć samego siebie
+        var currentUserId = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value 
+                         ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                         
+        if (currentUserId == id.ToString())
+        {
+            return BadRequest(new { message = "Nie możesz usunąć własnego konta administratora." });
+        }
         
         _context.Users.Remove(user);
-        await _context.SaveChangesAsync();
 
-        return Ok(new { message = "Użytkownik został usunięty z systemu." });
+        try
+        {
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Użytkownik został usunięty z systemu." });
+        }
+        catch (DbUpdateException)
+        {
+            // Łapiemy wyjątek z bazy danych (np. naruszenie klucza obcego przez przypisane tickety)
+            return Conflict(new { 
+                message = "Nie można usunąć tego użytkownika, ponieważ posiada on przypisane zgłoszenia (tickety) w systemie." 
+            });
+        }
+        catch (Exception)
+        {
+            // Fallback dla innych, nieprzewidzianych błędów
+            return StatusCode(500, new { message = "Wystąpił nieoczekiwany błąd podczas usuwania użytkownika." });
+        }
     }
 }
