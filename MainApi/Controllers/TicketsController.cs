@@ -14,13 +14,12 @@ namespace MainApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize] // Zabezpiecza CAŁY kontroler - wymaga tokenu JWT
+[Authorize]
 public class TicketsController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly RabbitMqService _rabbitMqService;
 
-    // Konstruktor przyjmuje teraz zarówno kontekst bazy, jak i nasz nowy serwis królika
     public TicketsController(AppDbContext context, RabbitMqService rabbitMqService)
     {
         _context = context;
@@ -28,14 +27,23 @@ public class TicketsController : ControllerBase
     }
 
     // =========================================================
-    // GET: /api/tickets (Dostępne TYLKO dla Administratora)
+    // GET: /api/tickets (Z opcją uwzględnienia zarchiwizowanych)
     // =========================================================
     [HttpGet]
     [Authorize(Roles = nameof(Role.Admin))]
-    public async Task<IActionResult> GetAllTickets()
+    public async Task<IActionResult> GetAllTickets([FromQuery] bool includeArchived = false)
     {
-        var tickets = await _context.Tickets
-            .Include(t => t.Creator) // Dołączamy relację (dane pracownika)
+        var query = _context.Tickets
+            .Include(t => t.Creator)
+            .AsQueryable();
+
+        // Jeśli admin nie chce widzieć zarchiwizowanych, filtrujemy je
+        if (!includeArchived)
+        {
+            query = query.Where(t => !t.IsArchived);
+        }
+
+        var tickets = await query
             .Select(t => new
             {
                 t.Id,
@@ -43,61 +51,81 @@ public class TicketsController : ControllerBase
                 t.Description,
                 t.Status,
                 t.Category,
+                t.IsArchived,
                 t.CreatedAt,
-                // Zgodnie ze specyfikacją - admin musi widzieć kontakt do twórcy
                 CreatorEmail = t.Creator!.Email,
                 CreatorContactInfo = t.Creator.ContactInfo
             })
-            .OrderByDescending(t => t.CreatedAt) // Najnowsze na górze
+            .OrderByDescending(t => t.CreatedAt)
             .ToListAsync();
 
         return Ok(tickets);
     }
 
     // =========================================================
-    // POST: /api/tickets (Dostępne dla zalogowanych)
+    // POST: /api/tickets (Tworzenie nowego zgłoszenia)
     // =========================================================
     [HttpPost]
     public async Task<IActionResult> CreateTicket([FromBody] CreateTicketRequest request)
     {
-        // 1. Bezpieczne wyciągnięcie ID użytkownika z tokenu JWT
         var userIdString = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value 
                         ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
         if (string.IsNullOrEmpty(userIdString) || !Guid.TryParse(userIdString, out Guid userId))
         {
-            return Unauthorized(new { message = "Nie można zidentyfikować użytkownika na podstawie tokenu." });
+            return Unauthorized(new { message = "Nie można zidentyfikować użytkownika." });
         }
 
-        // 2. Utworzenie encji i zapis w bazie
         var ticket = new Ticket
         {
             Title = request.Title,
             Description = request.Description,
             Category = request.Category,
-            CreatorId = userId // Przypisanie autora
+            CreatorId = userId,
+            IsArchived = false // Nowy ticket nigdy nie jest zarchiwizowany
         };
 
         _context.Tickets.Add(ticket);
         await _context.SaveChangesAsync();
 
-        // 3. WYSYŁKA DO RABBITMQ (Komunikacja asynchroniczna)
-        // Pobieramy e-mail twórcy z tokenu JWT
         var userEmail = User.FindFirst(ClaimTypes.Email)?.Value ?? "nieznany@email.com";
 
-        var ticketEvent = new TicketCreatedEvent
+        _rabbitMqService.PublishTicketCreatedEvent(new TicketCreatedEvent
         {
             TicketId = ticket.Id,
             Title = ticket.Title,
             CreatorEmail = userEmail
-        };
+        });
 
-        // Rzucamy zdarzenie do kolejki!
-        _rabbitMqService.PublishTicketCreatedEvent(ticketEvent);
+        return Ok(new { message = "Zgłoszenie zostało utworzone.", ticketId = ticket.Id });
+    }
+
+    // =========================================================
+    // PATCH: /api/tickets/{id}/status (Zmiana statusu i automatyczna archiwizacja)
+    // =========================================================
+    [HttpPatch("{id:guid}/status")]
+    [Authorize(Roles = nameof(Role.Admin))]
+    public async Task<IActionResult> UpdateTicketStatus(Guid id, [FromBody] UpdateTicketStatusRequest request)
+    {
+        var ticket = await _context.Tickets.FirstOrDefaultAsync(t => t.Id == id);
+        
+        if (ticket == null)
+        {
+            return NotFound(new { message = "Nie znaleziono zgłoszenia." });
+        }
+
+        ticket.Status = request.Status;
+
+        // Logika archiwizacji: Jeśli status to Completed (wartość 1 w Twoim enumie), archiwizujemy
+        // Dostosuj 'TicketStatus.Completed' do nazwy w Twoim enumnie!
+        ticket.IsArchived = (request.Status == TicketStatus.Closed);
+
+        await _context.SaveChangesAsync();
 
         return Ok(new { 
-            message = "Zgłoszenie zostało pomyślnie utworzone.", 
-            ticketId = ticket.Id 
+            message = "Status zaktualizowany.", 
+            newStatus = ticket.Status,
+            isArchived = ticket.IsArchived
         });
     }
 }
