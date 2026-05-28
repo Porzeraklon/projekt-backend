@@ -4,7 +4,7 @@ using MainApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using SharedModels.Entities;
+using MainApi.Entities;
 using SharedModels.Enums;
 using SharedModels.Events;
 using System.IdentityModel.Tokens.Jwt;
