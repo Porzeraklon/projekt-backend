@@ -42,6 +42,7 @@
 /home/damian/projekt-chlopaki/WorkerService/obj/Debug/net8.0/WorkerService.AssemblyInfoInputs.cache
 /home/damian/projekt-chlopaki/WorkerService/obj/Debug/net8.0/WorkerService.AssemblyInfo.cs
 /home/damian/projekt-chlopaki/WorkerService/obj/Debug/net8.0/WorkerService.csproj.CoreCompileInputs.cache
+/home/damian/projekt-chlopaki/WorkerService/obj/Debug/net8.0/WorkerService.sourcelink.json
 /home/damian/projekt-chlopaki/WorkerService/obj/Debug/net8.0/WorkerSe.C068770D.Up2Date
 /home/damian/projekt-chlopaki/WorkerService/obj/Debug/net8.0/WorkerService.dll
 /home/damian/projekt-chlopaki/WorkerService/obj/Debug/net8.0/refint/WorkerService.dll

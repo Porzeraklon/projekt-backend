@@ -1,26 +1,48 @@
 using MainApi.Data;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. POBRANIE CONNECTION STRINGA Z APPSETTINGS
+// 1. Baza Danych
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-
-// 2. REJESTRACJA DBCONTEXT W KONTENERZE DI (Dependency Injection)
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseMySql(
-        connectionString, 
-        ServerVersion.AutoDetect(connectionString)
-    ));
+    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
 
-// Dodanie kontrolerów (standard w Web API)
+// 2. KONFIGURACJA JWT
+var jwtSettings = builder.Configuration.GetSection("Jwt");
+var secretKey = jwtSettings["Key"]!;
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwtSettings["Issuer"],
+        ValidAudience = jwtSettings["Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey))
+    };
+});
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
-// Konfiguracja potoku HTTP (Middleware)
+// Rejestracja serwisów
+builder.Services.AddScoped<MainApi.Services.TokenService>();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -29,7 +51,9 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-app.UseAuthorization();
+// 3. MIDDLEWARE: Kolejność jest absolutnie kluczowa!
+app.UseAuthentication(); // Najpierw sprawdzamy KIM jest użytkownik
+app.UseAuthorization();  // Potem sprawdzamy, CO MOŻE zrobić
 
 app.MapControllers();
 

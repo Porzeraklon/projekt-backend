@@ -5,6 +5,8 @@
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/MainApi.runtimeconfig.json
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/MainApi.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/MainApi.pdb
+/home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/BCrypt-Net-Next.dll
+/home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.AspNetCore.Authentication.JwtBearer.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.AspNetCore.OpenApi.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.EntityFrameworkCore.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.EntityFrameworkCore.Abstractions.dll
@@ -18,6 +20,12 @@
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.Extensions.Logging.Abstractions.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.Extensions.Options.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.Extensions.Primitives.dll
+/home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.IdentityModel.Abstractions.dll
+/home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.IdentityModel.JsonWebTokens.dll
+/home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.IdentityModel.Logging.dll
+/home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.IdentityModel.Protocols.dll
+/home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.IdentityModel.Protocols.OpenIdConnect.dll
+/home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.IdentityModel.Tokens.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Microsoft.OpenApi.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/MySqlConnector.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Pomelo.EntityFrameworkCore.MySql.dll
@@ -25,6 +33,7 @@
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Swashbuckle.AspNetCore.SwaggerGen.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Swashbuckle.AspNetCore.SwaggerUI.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/System.Diagnostics.DiagnosticSource.dll
+/home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/System.IdentityModel.Tokens.Jwt.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/SharedModels.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/SharedModels.pdb
 /home/damian/projekt-chlopaki/MainApi/obj/Debug/net8.0/MainApi.csproj.AssemblyReference.cache
@@ -34,6 +43,7 @@
 /home/damian/projekt-chlopaki/MainApi/obj/Debug/net8.0/MainApi.csproj.CoreCompileInputs.cache
 /home/damian/projekt-chlopaki/MainApi/obj/Debug/net8.0/MainApi.MvcApplicationPartsAssemblyInfo.cs
 /home/damian/projekt-chlopaki/MainApi/obj/Debug/net8.0/MainApi.MvcApplicationPartsAssemblyInfo.cache
+/home/damian/projekt-chlopaki/MainApi/obj/Debug/net8.0/MainApi.sourcelink.json
 /home/damian/projekt-chlopaki/MainApi/obj/Debug/net8.0/staticwebassets.build.json
 /home/damian/projekt-chlopaki/MainApi/obj/Debug/net8.0/staticwebassets.development.json
 /home/damian/projekt-chlopaki/MainApi/obj/Debug/net8.0/staticwebassets/msbuild.MainApi.Microsoft.AspNetCore.StaticWebAssets.props
