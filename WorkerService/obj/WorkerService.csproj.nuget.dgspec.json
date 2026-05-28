@@ -105,9 +105,9 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "dependencies": {
-            "Microsoft.Extensions.Hosting": {
+            "RabbitMQ.Client": {
               "target": "Package",
-              "version": "[8.0.1, )"
+              "version": "[6.8.1, )"
             }
           },
           "imports": [
@@ -122,6 +122,9 @@
           "assetTargetFallback": true,
           "warn": true,
           "frameworkReferences": {
+            "Microsoft.AspNetCore.App": {
+              "privateAssets": "none"
+            },
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
             }

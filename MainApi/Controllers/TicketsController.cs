@@ -1,10 +1,12 @@
 using MainApi.Data;
 using MainApi.DTOs;
+using MainApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SharedModels.Entities;
 using SharedModels.Enums;
+using SharedModels.Events;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 
@@ -16,10 +18,13 @@ namespace MainApi.Controllers;
 public class TicketsController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly RabbitMqService _rabbitMqService;
 
-    public TicketsController(AppDbContext context)
+    // Konstruktor przyjmuje teraz zarówno kontekst bazy, jak i nasz nowy serwis królika
+    public TicketsController(AppDbContext context, RabbitMqService rabbitMqService)
     {
         _context = context;
+        _rabbitMqService = rabbitMqService;
     }
 
     // =========================================================
@@ -76,9 +81,19 @@ public class TicketsController : ControllerBase
         _context.Tickets.Add(ticket);
         await _context.SaveChangesAsync();
 
-        // 3. TODO: Komunikacja Asynchroniczna
-        // W kolejnym etapie dodamy tutaj kod, który wyśle TicketCreatedEvent 
-        // na kolejkę RabbitMQ, żeby Worker Service to odebrał i powiadomił front!
+        // 3. WYSYŁKA DO RABBITMQ (Komunikacja asynchroniczna)
+        // Pobieramy e-mail twórcy z tokenu JWT
+        var userEmail = User.FindFirst(ClaimTypes.Email)?.Value ?? "nieznany@email.com";
+
+        var ticketEvent = new TicketCreatedEvent
+        {
+            TicketId = ticket.Id,
+            Title = ticket.Title,
+            CreatorEmail = userEmail
+        };
+
+        // Rzucamy zdarzenie do kolejki!
+        _rabbitMqService.PublishTicketCreatedEvent(ticketEvent);
 
         return Ok(new { 
             message = "Zgłoszenie zostało pomyślnie utworzone.", 

@@ -30,6 +30,7 @@
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/MySqlConnector.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Otp.NET.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Pomelo.EntityFrameworkCore.MySql.dll
+/home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/RabbitMQ.Client.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Swashbuckle.AspNetCore.Swagger.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Swashbuckle.AspNetCore.SwaggerGen.dll
 /home/damian/projekt-chlopaki/MainApi/bin/Debug/net8.0/Swashbuckle.AspNetCore.SwaggerUI.dll
