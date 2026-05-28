@@ -1,4 +1,4 @@
-using SharedModels.Entities;
+using MainApi.Entities;
 using SharedModels.Enums;
 using OtpNet;
 

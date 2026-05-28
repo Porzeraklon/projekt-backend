@@ -1,4 +1,4 @@
-# 1. Etap budowania (SDK)
+# Etap 1: Budowanie
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
@@ -7,18 +7,16 @@ COPY ["WorkerService/WorkerService.csproj", "WorkerService/"]
 COPY ["SharedModels/SharedModels.csproj", "SharedModels/"]
 RUN dotnet restore "WorkerService/WorkerService.csproj"
 
-# Kopiujemy całą resztę kodu
+# Kopiujemy resztę
 COPY . .
-
-# Budujemy Workera
 WORKDIR "/src/WorkerService"
+
+# Publikacja
 RUN dotnet publish "WorkerService.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
-# 2. Etap uruchamiania (Lekki obraz Runtime)
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+# Etap 2: Środowisko uruchomieniowe
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 WORKDIR /app
-COPY --from=build /app/publish .
-
 EXPOSE 8080
-
+COPY --from=build /app/publish .
 ENTRYPOINT ["dotnet", "WorkerService.dll"]
