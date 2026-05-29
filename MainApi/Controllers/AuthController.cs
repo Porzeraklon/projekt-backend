@@ -55,6 +55,7 @@ public class AuthController : ControllerBase
 
         // Dla zwykłych pracowników od razu generujemy token
         var token = _tokenService.GenerateJwtToken(user);
+
         return Ok(new { token });
     }
 
@@ -70,6 +71,7 @@ public class AuthController : ControllerBase
 
         // Weryfikacja kodu z Google Authenticator / Authy za pomocą Otp.NET
         var base32Bytes = Base32Encoding.ToBytes(user.TwoFactorSecret);
+
         var totp = new Totp(base32Bytes);
 
         // Weryfikacja kodu z oknem czasowym (tzw. Time Tolerance) na wypadek asynchronizacji zegarów
@@ -80,8 +82,18 @@ public class AuthController : ControllerBase
             return Unauthorized(new { message = "Nieprawidłowy lub przeterminowany kod 2FA." });
         }
 
+        // ====================================================================
+        // DODANO: Zapis aktywacji 2FA do bazy po pierwszym pomyślnym podaniu kodu
+        // ====================================================================
+        if (!user.TwoFactorEnabled)
+        {
+            user.TwoFactorEnabled = true;
+            await _context.SaveChangesAsync();
+        }
+
         // Kod jest poprawny, wydajemy pełnoprawny token JWT
         var token = _tokenService.GenerateJwtToken(user);
+
         return Ok(new { token });
     }
 }

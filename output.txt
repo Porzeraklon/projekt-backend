@@ -48,483 +48,93 @@ docker-compose.yml
 output.txt
 
 ================================================
-File: docker-compose.yml
-================================================
-services:
-  # 1. BAZA DANYCH
-  mariadb:
-    image: mariadb:lts
-    container_name: ticketing-mariadb
-    restart: always
-    environment:
-      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
-      MARIADB_DATABASE: ticketing_db
-      MARIADB_USER: ticketing_api_user
-      MARIADB_PASSWORD: ${DB_PASSWORD}
-    ports:
-      - "3307:3306"
-    volumes:
-      - mariadb_data:/var/lib/mysql
-
-  # 2. BROKER WIADOMOŚCI
-  rabbitmq:
-    image: rabbitmq:3-management
-    container_name: ticketing-rabbitmq
-    restart: always
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-
-  # 3. GŁÓWNE API (Pobierane z GHCR)
-  main-api:
-    image: ghcr.io/porzeraklon/ticketing-main-api:latest
-    container_name: ticketing-main-api
-    restart: always
-    ports:
-      - "5000:8080"
-    environment:
-      - ConnectionStrings__DefaultConnection=Server=mariadb;Port=3306;Database=ticketing_db;User Id=ticketing_api_user;Password=${DB_PASSWORD};
-      - RabbitMQ__HostName=rabbitmq
-      - Jwt__Key=${JWT_SECRET}
-      - ASPNETCORE_ENVIRONMENT=Development
-      - AllowedOrigins=http://ticketing-frontend.local;https://mojadomena.pl
-    depends_on:
-      - mariadb
-      - rabbitmq
-
-  # 4. WORKER SERVICE (Pobierane z GHCR)
-  worker-service:
-    image: ghcr.io/porzeraklon/ticketing-worker-service:latest
-    container_name: ticketing-worker-service
-    restart: always
-    ports:
-      - "5001:8080"
-    environment:
-      - RabbitMQ__HostName=rabbitmq
-      - Jwt__Key=${JWT_SECRET}
-      - ASPNETCORE_ENVIRONMENT=Development
-      # DODANO: Wstrzykujemy listę dozwolonych adresów Frontendowych
-      - AllowedOrigins=http://ticketing-frontend.local;https://mojadomena.pl
-    depends_on:
-      - rabbitmq
-      - main-api
-
-volumes:
-  mariadb_data:
-
-================================================
-File: MainApi/Properties/launchSettings.json
-================================================
-﻿{
-  "$schema": "http://json.schemastore.org/launchsettings.json",
-  "iisSettings": {
-    "windowsAuthentication": false,
-    "anonymousAuthentication": true,
-    "iisExpress": {
-      "applicationUrl": "http://localhost:28845",
-      "sslPort": 44396
-    }
-  },
-  "profiles": {
-    "http": {
-      "commandName": "Project",
-      "dotnetRunMessages": true,
-      "launchBrowser": true,
-      "launchUrl": "swagger",
-      "applicationUrl": "http://localhost:5038",
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
-      }
-    },
-    "https": {
-      "commandName": "Project",
-      "dotnetRunMessages": true,
-      "launchBrowser": true,
-      "launchUrl": "swagger",
-      "applicationUrl": "https://localhost:7047;http://localhost:5038",
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
-      }
-    },
-    "IIS Express": {
-      "commandName": "IISExpress",
-      "launchBrowser": true,
-      "launchUrl": "swagger",
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
-      }
-    }
-  }
-}
-
-
-================================================
-File: MainApi/Services/RabbitMqService.cs
-================================================
-using Microsoft.Extensions.ObjectPool;
-using RabbitMQ.Client;
-using System.Text;
-using System.Text.Json;
-
-namespace MainApi.Services;
-
-// ====================================================================
-// 1. POLITYKA ZARZĄDZANIA KANAŁAMI (Jak pula ma tworzyć i niszczyć obiekty)
-// ====================================================================
-public class RabbitModelPooledObjectPolicy : IPooledObjectPolicy<IModel>
-{
-    private readonly IConnection _connection;
-
-    public RabbitModelPooledObjectPolicy(IConnection connection)
-    {
-        _connection = connection;
-    }
-
-    public IModel Create()
-    {
-        // Kiedy pula jest pusta, tworzy nowy kanał
-        return _connection.CreateModel();
-    }
-
-    public bool Return(IModel obj)
-    {
-        // Kiedy zwracamy kanał do puli, sprawdzamy czy nadal żyje
-        if (obj.IsOpen)
-        {
-            return true;
-        }
-        else
-        {
-            obj?.Dispose();
-            return false;
-        }
-    }
-}
-
-// ====================================================================
-// 2. GŁÓWNY SERWIS RABBITMQ
-// ====================================================================
-public class RabbitMqService : IDisposable
-{
-    private readonly IConnection _connection;
-    private readonly ObjectPool<IModel> _channelPool;
-
-    public RabbitMqService(IConfiguration configuration)
-    {
-        var host = configuration["RabbitMQ:HostName"] ?? "localhost";
-        var factory = new ConnectionFactory() { HostName = host };
-        
-        // Ustanawiamy JEDNO globalne połączenie dla całego cyklu życia API
-        _connection = factory.CreateConnection();
-
-        // Konfiguracja puli obiektów
-        var policy = new RabbitModelPooledObjectPolicy(_connection);
-        var provider = new DefaultObjectPoolProvider 
-        { 
-            MaximumRetained = Environment.ProcessorCount * 2 // Optymalna liczba trzymanych w pamięci kanałów
-        };
-        _channelPool = provider.Create(policy);
-    }
-
-    public void PublishTicketCreatedEvent<T>(T message)
-    {
-        // Pobieramy gotowy kanał z puli
-        var channel = _channelPool.Get();
-        
-        try
-        {
-            // Deklaracja kolejki (idempotentna - jeśli istnieje, nic się nie stanie)
-            channel.QueueDeclare(queue: "ticket_notifications",
-                                 durable: true,
-                                 exclusive: false,
-                                 autoDelete: false,
-                                 arguments: null);
-
-            var json = JsonSerializer.Serialize(message);
-            var body = Encoding.UTF8.GetBytes(json);
-
-            channel.BasicPublish(exchange: "",
-                                 routingKey: "ticket_notifications",
-                                 basicProperties: null,
-                                 body: body);
-        }
-        finally
-        {
-            // ZAWSZE zwracamy kanał do puli, nawet jak poleci wyjątek!
-            _channelPool.Return(channel);
-        }
-    }
-
-    public void Dispose()
-    {
-        // Zamykamy połączenie przy wyłączaniu aplikacji
-        _connection?.Close();
-        _connection?.Dispose();
-    }
-}
-
-================================================
-File: MainApi/appsettings.json
-================================================
-{
-  "Logging": {
-    "LogLevel": {
-      "Default": "Information",
-      "Microsoft.AspNetCore": "Warning"
-    }
-  },
-  "AllowedOrigins": "http://localhost:5173;http://localhost:8080",
-  "AllowedHosts": "*",
-  "RabbitMQ": {
-    "HostName": "rabbitmq"
-  },
-  "ConnectionStrings": {
-    "DefaultConnection": "Server=mariadb;Port=3306;Database=ticketing_db;User Id=ticketing_api_user;Password=SET_IN_ENVIRONMENT;"
-  },
-  "Jwt": {
-    "Key": "SET_IN_ENVIRONMENT",
-    "Issuer": "TicketingApi",
-    "Audience": "TicketingUsers",
-    "ExpireMinutes": 120
-  }
-}
-
-================================================
-File: WorkerService/Hubs/NotificationHub.cs
-================================================
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.SignalR;
-
-namespace WorkerService.Hubs;
-
-[Authorize]
-public class NotificationHub : Hub
-{
-    public override async Task OnConnectedAsync()
-    {
-        if (Context.User != null && Context.User.IsInRole("Admin"))
-        {
-            await Groups.AddToGroupAsync(Context.ConnectionId, "AdminsGroup");
-        }
-        
-        await base.OnConnectedAsync();
-    }
-
-    public override async Task OnDisconnectedAsync(Exception? exception)
-    {
-        if (Context.User != null && Context.User.IsInRole("Admin"))
-        {
-            await Groups.RemoveFromGroupAsync(Context.ConnectionId, "AdminsGroup");
-        }
-        
-        await base.OnDisconnectedAsync(exception);
-    }
-}
-
-================================================
-File: MainApi/DTOs/UpdateTicketStatusRequest.cs
+File: MainApi/DTOs/CreateTicketRequest.cs
 ================================================
 using SharedModels.Enums;
 using System.ComponentModel.DataAnnotations;
 
 namespace MainApi.DTOs;
 
-public class UpdateTicketStatusRequest
+public class CreateTicketRequest
 {
     [Required]
-    public TicketStatus Status { get; set; } // Zwróć uwagę na nazwę swojego enuma, jeśli masz inną
+    public string Title { get; set; } = string.Empty;
+
+    [Required]
+    public string Description { get; set; } = string.Empty;
+
+    [Required]
+    public TicketCategory Category { get; set; }
 }
 
 ================================================
-File: MainApi/Data/AppDbContext.cs
+File: MainApi/Entities/Ticket.cs
 ================================================
-using Microsoft.EntityFrameworkCore;
-using MainApi.Entities;
-
-namespace MainApi.Data;
-
-public class AppDbContext : DbContext
-{
-    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
-
-    public DbSet<User> Users { get; set; }
-    public DbSet<Ticket> Tickets { get; set; }
-
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        base.OnModelCreating(modelBuilder);
-
-        // Wymuszenie unikalności adresu Email
-        modelBuilder.Entity<User>()
-            .HasIndex(u => u.Email)
-            .IsUnique();
-
-        // Konfiguracja relacji bazy danych
-        modelBuilder.Entity<Ticket>()
-            .HasOne(t => t.Creator)
-            .WithMany(u => u.Tickets)
-            .HasForeignKey(t => t.CreatorId)
-            .OnDelete(DeleteBehavior.Restrict); // Zapobiega kaskadowemu usunięciu ticketów przy usunięciu użytkownika
-    }
-}
-
-================================================
-File: MainApi/Data/DatabaseSeeder.cs
-================================================
-using SharedModels.Entities;
+using System.ComponentModel.DataAnnotations;
 using SharedModels.Enums;
-using OtpNet;
 
-namespace MainApi.Data;
+namespace MainApi.Entities;
 
-public static class DatabaseSeeder
+public class Ticket
 {
-    public static void Seed(AppDbContext context)
-    {
-        // Tworzy bazę danych (jeśli nie istnieje) na podstawie Twojego DbContextu
-        context.Database.EnsureCreated(); 
+    public Guid Id { get; set; } = Guid.NewGuid();
 
-        if (!context.Users.Any())
-        {
-            // Generowanie klucza 2FA dla Admina
-            var key = KeyGeneration.GenerateRandomKey(20);
-            var base32Secret = Base32Encoding.ToString(key);
+    [Required]
+    public string Title { get; set; } = string.Empty;
 
-            var admin = new User
-            {
-                Email = "admin@test.com",
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword("Admin123!"),
-                Role = Role.Admin,
-                TwoFactorEnabled = true,
-                TwoFactorSecret = base32Secret,
-                ContactInfo = "Główny Serwer"
-            };
+    [Required]
+    public string Description { get; set; } = string.Empty;
 
-            var employee = new User
-            {
-                Email = "user@test.com",
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword("User123!"),
-                Role = Role.Employee,
-                TwoFactorEnabled = false,
-                ContactInfo = "Biurko 42"
-            };
+    public TicketStatus Status { get; set; } = TicketStatus.New;
+    public TicketCategory Category { get; set; }
 
-            context.Users.AddRange(admin, employee);
-            context.SaveChanges();
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-            // Wypisujemy tajny klucz jawnym tekstem do testów
-            Console.WriteLine("\n==================================================");
-            Console.WriteLine(" DATA SEEDING: Utworzono konta testowe!");
-            Console.WriteLine($" Admin Email: {admin.Email}");
-            Console.WriteLine($" Admin Hasło: Admin123!");
-            Console.WriteLine($" Admin 2FA Secret: {base32Secret}");
-            Console.WriteLine("==================================================\n");
-        }
-    }
+    // Klucz obcy i właściwość nawigacyjna do twórcy zgłoszenia
+    public Guid CreatorId { get; set; }
+    public User? Creator { get; set; }
+    // Dodaj tę linijkę w klasie Ticket:
+    public bool IsArchived { get; set; } = false;
 }
 
 ================================================
-File: WorkerService/Worker.cs
+File: TicketingSystem.sln
 ================================================
-using System.Text;
-using System.Text.Json;
-using Microsoft.AspNetCore.SignalR;
-using RabbitMQ.Client;
-using RabbitMQ.Client.Events;
-using SharedModels.Events;
-using WorkerService.Hubs;
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MainApi", "MainApi\MainApi.csproj", "{9D5F2861-0F16-485B-8E71-9776372CCB9F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WorkerService", "WorkerService\WorkerService.csproj", "{271B787B-5A82-45A9-8BE4-8E16BEDCC745}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharedModels", "SharedModels\SharedModels.csproj", "{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Release|Any CPU.Build.0 = Release|Any CPU
+		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
 
-namespace WorkerService;
-
-public class Worker : BackgroundService
-{
-    private readonly ILogger<Worker> _logger;
-    private readonly IHubContext<NotificationHub> _hubContext;
-    private readonly IConfiguration _configuration;
-    private IConnection _connection = null!;
-    private IModel _channel = null!;
-
-    public Worker(ILogger<Worker> logger, IHubContext<NotificationHub> hubContext, IConfiguration configuration)
-    {
-        _logger = logger;
-        _hubContext = hubContext;
-        _configuration = configuration;
-        InitRabbitMQ();
-    }
-
-    private void InitRabbitMQ()
-    {
-        var rabbitHost = _configuration["RabbitMQ:HostName"] ?? "localhost";
-        
-        var factory = new ConnectionFactory { HostName = rabbitHost, DispatchConsumersAsync = true };
-        _connection = factory.CreateConnection();
-        _channel = _connection.CreateModel();
-
-        _channel.QueueDeclare(queue: "ticket_notifications",
-                             durable: true,
-                             exclusive: false,
-                             autoDelete: false,
-                             arguments: null);
-
-        _logger.LogInformation($"[Worker] RabbitMQ Host: {rabbitHost} | Oczekuję na wiadomości...");
-    }
-
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        stoppingToken.ThrowIfCancellationRequested();
-
-        var consumer = new AsyncEventingBasicConsumer(_channel);
-        
-        // Logika asynchronicznego odbierania wiadomości
-        consumer.Received += async (model, ea) =>
-        {
-            try
-            {
-                var body = ea.Body.ToArray();
-                var message = Encoding.UTF8.GetString(body);
-                
-                // 1. Bezpieczna deserializacja
-                var ticketEvent = JsonSerializer.Deserialize<TicketCreatedEvent>(message);
-
-                _logger.LogInformation($"Odebrano nowy ticket: {ticketEvent?.TicketId}. Przesyłam do Adminów...");
-                
-                if (ticketEvent != null)
-                {
-                    // 2. Próba wysyłki przez SignalR (też może rzucić wyjątkiem przy zerwanym sieci)
-                    await _hubContext.Clients.Group("AdminsGroup").SendAsync("ReceiveNewTicket", ticketEvent);
-                }
-
-                // 3. Pełen sukces - potwierdzamy RabbitMQ, że wiadomość została przetworzona (usunięcie z kolejki)
-                _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
-            }
-            catch (Exception ex)
-            {
-                // Łapiemy błędy deserializacji JSON, błędy SignalR i inne nieprzewidziane wyjątki
-                _logger.LogError(ex, "Krytyczny błąd podczas przetwarzania wiadomości z RabbitMQ. Wiadomość zostanie odrzucona.");
-                
-                // Odrzucamy wiadomość BEZ ponownego wrzucania na kolejkę (requeue: false),
-                // żeby uniknąć nieskończonej pętli przetwarzania tzw. "Poison Message".
-                _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: false);
-            }
-        };
-
-        _channel.BasicConsume(queue: "ticket_notifications", autoAck: false, consumer: consumer);
-
-        return Task.CompletedTask;
-    }
-
-    public override void Dispose()
-    {
-        // Dobrą praktyką jest również jawne wywołanie Dispose() dla kanałów i połączeń
-        _channel?.Close();
-        _channel?.Dispose();
-        
-        _connection?.Close();
-        _connection?.Dispose();
-        
-        base.Dispose();
-    }
-}
 
 ================================================
 File: MainApi/Controllers/TicketsController.cs
@@ -662,32 +272,231 @@ public class TicketsController : ControllerBase
 }
 
 ================================================
-File: MainApi/DTOs/CreateUserRequest.cs
+File: MainApi/Data/AppDbContext.cs
 ================================================
-using System.ComponentModel.DataAnnotations;
-using SharedModels.Enums;
+using Microsoft.EntityFrameworkCore;
+using MainApi.Entities;
 
-namespace MainApi.DTOs;
+namespace MainApi.Data;
 
-public class CreateUserRequest
+public class AppDbContext : DbContext
 {
-    [Required, EmailAddress]
-    public string Email { get; set; } = string.Empty;
+    public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
-    [Required, MinLength(6, ErrorMessage = "Hasło musi mieć co najmniej 6 znaków.")]
-    public string Password { get; set; } = string.Empty;
+    public DbSet<User> Users { get; set; }
+    public DbSet<Ticket> Tickets { get; set; }
 
-    [Required]
-    public Role Role { get; set; }
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
 
-    public string? ContactInfo { get; set; }
+        // Wymuszenie unikalności adresu Email
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.Email)
+            .IsUnique();
+
+        // Konfiguracja relacji bazy danych
+        modelBuilder.Entity<Ticket>()
+            .HasOne(t => t.Creator)
+            .WithMany(u => u.Tickets)
+            .HasForeignKey(t => t.CreatorId)
+            .OnDelete(DeleteBehavior.Restrict); // Zapobiega kaskadowemu usunięciu ticketów przy usunięciu użytkownika
+    }
+}
+
+================================================
+File: MainApi/Data/DatabaseSeeder.cs
+================================================
+using MainApi.Entities;
+using SharedModels.Enums;
+using OtpNet;
+
+namespace MainApi.Data;
+
+public static class DatabaseSeeder
+{
+    public static void Seed(AppDbContext context)
+    {
+        // Tworzy bazę danych (jeśli nie istnieje) na podstawie Twojego DbContextu
+        context.Database.EnsureCreated(); 
+
+        if (!context.Users.Any())
+        {
+            // Generowanie klucza 2FA dla Admina
+            var key = KeyGeneration.GenerateRandomKey(20);
+            var base32Secret = Base32Encoding.ToString(key);
+
+            var admin = new User
+            {
+                Email = "admin@test.com",
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword("Admin123!"),
+                Role = Role.Admin,
+                TwoFactorEnabled = true,
+                TwoFactorSecret = base32Secret,
+                ContactInfo = "Główny Serwer"
+            };
+
+            var employee = new User
+            {
+                Email = "user@test.com",
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword("User123!"),
+                Role = Role.Employee,
+                TwoFactorEnabled = false,
+                ContactInfo = "Biurko 42"
+            };
+
+            context.Users.AddRange(admin, employee);
+            context.SaveChanges();
+
+            // Wypisujemy tajny klucz jawnym tekstem do testów
+            Console.WriteLine("\n==================================================");
+            Console.WriteLine(" DATA SEEDING: Utworzono konta testowe!");
+            Console.WriteLine($" Admin Email: {admin.Email}");
+            Console.WriteLine($" Admin Hasło: Admin123!");
+            Console.WriteLine($" Admin 2FA Secret: {base32Secret}");
+            Console.WriteLine("==================================================\n");
+        }
+    }
+}
+
+================================================
+File: MainApi/MainApi.csproj
+================================================
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.27" />
+    <PackageReference Include="Otp.NET" Version="1.4.1" />
+    <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="9.0.0" />
+    <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharedModels\SharedModels.csproj" />
+  </ItemGroup>
+
+</Project>
+
+
+================================================
+File: MainApi/Services/RabbitMqService.cs
+================================================
+using Microsoft.Extensions.ObjectPool;
+using RabbitMQ.Client;
+using System.Text;
+using System.Text.Json;
+
+namespace MainApi.Services;
+
+// ====================================================================
+// 1. POLITYKA ZARZĄDZANIA KANAŁAMI (Jak pula ma tworzyć i niszczyć obiekty)
+// ====================================================================
+public class RabbitModelPooledObjectPolicy : IPooledObjectPolicy<IModel>
+{
+    private readonly IConnection _connection;
+
+    public RabbitModelPooledObjectPolicy(IConnection connection)
+    {
+        _connection = connection;
+    }
+
+    public IModel Create()
+    {
+        // Kiedy pula jest pusta, tworzy nowy kanał
+        return _connection.CreateModel();
+    }
+
+    public bool Return(IModel obj)
+    {
+        // Kiedy zwracamy kanał do puli, sprawdzamy czy nadal żyje
+        if (obj.IsOpen)
+        {
+            return true;
+        }
+        else
+        {
+            obj?.Dispose();
+            return false;
+        }
+    }
+}
+
+// ====================================================================
+// 2. GŁÓWNY SERWIS RABBITMQ
+// ====================================================================
+public class RabbitMqService : IDisposable
+{
+    private readonly IConnection _connection;
+    private readonly ObjectPool<IModel> _channelPool;
+
+    public RabbitMqService(IConfiguration configuration)
+    {
+        var host = configuration["RabbitMQ:HostName"] ?? "localhost";
+        var factory = new ConnectionFactory() { HostName = host };
+        
+        // Ustanawiamy JEDNO globalne połączenie dla całego cyklu życia API
+        _connection = factory.CreateConnection();
+
+        // Konfiguracja puli obiektów
+        var policy = new RabbitModelPooledObjectPolicy(_connection);
+        var provider = new DefaultObjectPoolProvider 
+        { 
+            MaximumRetained = Environment.ProcessorCount * 2 // Optymalna liczba trzymanych w pamięci kanałów
+        };
+        _channelPool = provider.Create(policy);
+    }
+
+    public void PublishTicketCreatedEvent<T>(T message)
+    {
+        // Pobieramy gotowy kanał z puli
+        var channel = _channelPool.Get();
+        
+        try
+        {
+            // Deklaracja kolejki (idempotentna - jeśli istnieje, nic się nie stanie)
+            channel.QueueDeclare(queue: "ticket_notifications",
+                                 durable: true,
+                                 exclusive: false,
+                                 autoDelete: false,
+                                 arguments: null);
+
+            var json = JsonSerializer.Serialize(message);
+            var body = Encoding.UTF8.GetBytes(json);
+
+            channel.BasicPublish(exchange: "",
+                                 routingKey: "ticket_notifications",
+                                 basicProperties: null,
+                                 body: body);
+        }
+        finally
+        {
+            // ZAWSZE zwracamy kanał do puli, nawet jak poleci wyjątek!
+            _channelPool.Return(channel);
+        }
+    }
+
+    public void Dispose()
+    {
+        // Zamykamy połączenie przy wyłączaniu aplikacji
+        _connection?.Close();
+        _connection?.Dispose();
+    }
 }
 
 ================================================
 File: MainApi/Services/TokenService.cs
 ================================================
 using Microsoft.IdentityModel.Tokens;
-using SharedModels.Entities;
+using MainApi.Entities;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -730,6 +539,131 @@ public class TokenService
 }
 
 ================================================
+File: MainApi/appsettings.json
+================================================
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedOrigins": "http://localhost:5173;http://localhost:8080",
+  "AllowedHosts": "*",
+  "RabbitMQ": {
+    "HostName": "rabbitmq"
+  },
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=mariadb;Port=3306;Database=ticketing_db;User Id=ticketing_api_user;Password=SET_IN_ENVIRONMENT;"
+  },
+  "Jwt": {
+    "Key": "SET_IN_ENVIRONMENT",
+    "Issuer": "TicketingApi",
+    "Audience": "TicketingUsers",
+    "ExpireMinutes": 120
+  }
+}
+
+================================================
+File: SharedModels/Enums/TicketCategory.cs
+================================================
+namespace SharedModels.Enums;
+
+public enum TicketCategory 
+{ 
+    Hardware, 
+    Software 
+}
+
+================================================
+File: .gitignore
+================================================
+# =========================
+# Zmienne środowiskowe i sekrety
+# =========================
+.env
+.env.*
+!.env.example
+appsettings.Development.json
+*.user
+
+# =========================
+# .NET / C#
+# =========================
+# Foldery z wynikiem kompilacji i plikami tymczasowymi
+bin/
+obj/
+TestResults/
+*.DotSettings.user
+
+# =========================
+# Pliki systemowe i tymczasowe (Linux / Edytory terminalowe)
+# =========================
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# =========================
+# IDE i narzędzia (na wypadek współpracy)
+# =========================
+.vscode/
+.vs/
+.idea/
+*.sln.user
+
+# =========================
+# Docker
+# =========================
+.dockerignore
+
+================================================
+File: SharedModels/Enums/TicketStatus.cs
+================================================
+namespace SharedModels.Enums;
+
+public enum TicketStatus 
+{ 
+    New, 
+    InProgress, 
+    Resolved, 
+    Closed 
+}
+
+================================================
+File: WorkerService/Hubs/NotificationHub.cs
+================================================
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.SignalR;
+
+namespace WorkerService.Hubs;
+
+[Authorize]
+public class NotificationHub : Hub
+{
+    public override async Task OnConnectedAsync()
+    {
+        if (Context.User != null && Context.User.IsInRole("Admin"))
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, "AdminsGroup");
+        }
+        
+        await base.OnConnectedAsync();
+    }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        if (Context.User != null && Context.User.IsInRole("Admin"))
+        {
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, "AdminsGroup");
+        }
+        
+        await base.OnDisconnectedAsync(exception);
+    }
+}
+
+================================================
 File: WorkerService/Properties/launchSettings.json
 ================================================
 ﻿{
@@ -747,46 +681,300 @@ File: WorkerService/Properties/launchSettings.json
 
 
 ================================================
+File: WorkerService/Worker.cs
+================================================
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.SignalR;
+using RabbitMQ.Client;
+using RabbitMQ.Client.Events;
+using SharedModels.Events;
+using WorkerService.Hubs;
+
+namespace WorkerService;
+
+public class Worker : BackgroundService
+{
+    private readonly ILogger<Worker> _logger;
+    private readonly IHubContext<NotificationHub> _hubContext;
+    private readonly IConfiguration _configuration;
+    private IConnection _connection = null!;
+    private IModel _channel = null!;
+
+    public Worker(ILogger<Worker> logger, IHubContext<NotificationHub> hubContext, IConfiguration configuration)
+    {
+        _logger = logger;
+        _hubContext = hubContext;
+        _configuration = configuration;
+        InitRabbitMQ();
+    }
+
+    private void InitRabbitMQ()
+    {
+        var rabbitHost = _configuration["RabbitMQ:HostName"] ?? "localhost";
+        
+        var factory = new ConnectionFactory { HostName = rabbitHost, DispatchConsumersAsync = true };
+        _connection = factory.CreateConnection();
+        _channel = _connection.CreateModel();
+
+        _channel.QueueDeclare(queue: "ticket_notifications",
+                             durable: true,
+                             exclusive: false,
+                             autoDelete: false,
+                             arguments: null);
+
+        _logger.LogInformation($"[Worker] RabbitMQ Host: {rabbitHost} | Oczekuję na wiadomości...");
+    }
+
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        stoppingToken.ThrowIfCancellationRequested();
+
+        var consumer = new AsyncEventingBasicConsumer(_channel);
+        
+        // Logika asynchronicznego odbierania wiadomości
+        consumer.Received += async (model, ea) =>
+        {
+            try
+            {
+                var body = ea.Body.ToArray();
+                var message = Encoding.UTF8.GetString(body);
+                
+                // 1. Bezpieczna deserializacja
+                var ticketEvent = JsonSerializer.Deserialize<TicketCreatedEvent>(message);
+
+                _logger.LogInformation($"Odebrano nowy ticket: {ticketEvent?.TicketId}. Przesyłam do Adminów...");
+                
+                if (ticketEvent != null)
+                {
+                    // 2. Próba wysyłki przez SignalR (też może rzucić wyjątkiem przy zerwanym sieci)
+                    await _hubContext.Clients.Group("AdminsGroup").SendAsync("ReceiveNewTicket", ticketEvent);
+                }
+
+                // 3. Pełen sukces - potwierdzamy RabbitMQ, że wiadomość została przetworzona (usunięcie z kolejki)
+                _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+            }
+            catch (Exception ex)
+            {
+                // Łapiemy błędy deserializacji JSON, błędy SignalR i inne nieprzewidziane wyjątki
+                _logger.LogError(ex, "Krytyczny błąd podczas przetwarzania wiadomości z RabbitMQ. Wiadomość zostanie odrzucona.");
+                
+                // Odrzucamy wiadomość BEZ ponownego wrzucania na kolejkę (requeue: false),
+                // żeby uniknąć nieskończonej pętli przetwarzania tzw. "Poison Message".
+                _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: false);
+            }
+        };
+
+        _channel.BasicConsume(queue: "ticket_notifications", autoAck: false, consumer: consumer);
+
+        return Task.CompletedTask;
+    }
+
+    public override void Dispose()
+    {
+        // Dobrą praktyką jest również jawne wywołanie Dispose() dla kanałów i połączeń
+        _channel?.Close();
+        _channel?.Dispose();
+        
+        _connection?.Close();
+        _connection?.Dispose();
+        
+        base.Dispose();
+    }
+}
+
+================================================
+File: WorkerService/WorkerService.csproj
+================================================
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharedModels\SharedModels.csproj" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
+  </ItemGroup>
+  
+</Project>
+
+================================================
+File: SharedModels/Enums/Role.cs
+================================================
+namespace SharedModels.Enums;
+
+public enum Role 
+{ 
+    Admin, 
+    Employee 
+}
+
+================================================
+File: docker-compose.yml
+================================================
+services:
+  # 1. BAZA DANYCH
+  mariadb:
+    image: mariadb:lts
+    container_name: ticketing-mariadb
+    restart: always
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ticketing_db
+      MARIADB_USER: ticketing_api_user
+      MARIADB_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+
+  # 2. BROKER WIADOMOŚCI
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: ticketing-rabbitmq
+    restart: always
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  # 3. GŁÓWNE API (Pobierane z GHCR)
+  main-api:
+    image: ghcr.io/porzeraklon/ticketing-main-api:latest
+    container_name: ticketing-main-api
+    restart: always
+    ports:
+      - "5000:8080"
+    environment:
+      - ConnectionStrings__DefaultConnection=Server=mariadb;Port=3306;Database=ticketing_db;User Id=ticketing_api_user;Password=${DB_PASSWORD};
+      - RabbitMQ__HostName=rabbitmq
+      - Jwt__Key=${JWT_SECRET}
+      - ASPNETCORE_ENVIRONMENT=Development
+      - AllowedOrigins=http://ticketing-frontend.local;https://mojadomena.pl
+    depends_on:
+      - mariadb
+      - rabbitmq
+
+  # 4. WORKER SERVICE (Pobierane z GHCR)
+  worker-service:
+    image: ghcr.io/porzeraklon/ticketing-worker-service:latest
+    container_name: ticketing-worker-service
+    restart: always
+    ports:
+      - "5001:8080"
+    environment:
+      - RabbitMQ__HostName=rabbitmq
+      - Jwt__Key=${JWT_SECRET}
+      - ASPNETCORE_ENVIRONMENT=Development
+      # DODANO: Wstrzykujemy listę dozwolonych adresów Frontendowych
+      - AllowedOrigins=http://ticketing-frontend.local;https://mojadomena.pl
+    depends_on:
+      - rabbitmq
+      - main-api
+
+volumes:
+  mariadb_data:
+
+================================================
 File: output.txt
 ================================================
 
 
 ================================================
-File: MainApi/DTOs/UpdateUserRequest.cs
+File: MainApi/Controllers/AuthController.cs
 ================================================
-using System.ComponentModel.DataAnnotations;
-using SharedModels.Enums;
+using MainApi.Data;
+using MainApi.DTOs;
+using MainApi.Services;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using OtpNet;
 
-namespace MainApi.DTOs;
+namespace MainApi.Controllers;
 
-public class UpdateUserRequest
+[ApiController]
+[Route("api/[controller]")]
+public class AuthController : ControllerBase
 {
-    [Required, EmailAddress]
-    public string Email { get; set; } = string.Empty;
+    private readonly AppDbContext _context;
+    private readonly TokenService _tokenService;
 
-    [Required]
-    public Role Role { get; set; }
+    public AuthController(AppDbContext context, TokenService tokenService)
+    {
+        _context = context;
+        _tokenService = tokenService;
+    }
 
-    public string? ContactInfo { get; set; }
+    [HttpPost("login")]
+    public async Task<IActionResult> Login([FromBody] LoginRequest request)
+    {
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
 
-    // Opcjonalne - wypełniane tylko w przypadku zmiany/resetu hasła
-    public string? Password { get; set; }
-}
+        if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+        {
+            return Unauthorized(new { message = "Nieprawidłowy email lub hasło." });
+        }
 
-================================================
-File: MainApi/DTOs/VerifyTwoFactorRequest.cs
-================================================
-using System.ComponentModel.DataAnnotations;
+        // Zgodnie ze specyfikacją: Admin ma bezwzględny obowiązek korzystania z 2FA
+        if (user.Role == SharedModels.Enums.Role.Admin)
+        {
+            if (user.TwoFactorEnabled)
+            {
+                // Admin ma już 2FA, prosimy o kod weryfikacyjny
+                return Ok(new { 
+                    requires2FA = true, 
+                    message = "Wymagana weryfikacja 2FA. Przejdź do endpointu /api/auth/verify-2fa" 
+                });
+            }
+            else
+            {
+                // Wymuszenie konfiguracji 2FA dla nowego Admina
+                // Przesyłamy Secret do frontendu, by Vue mogło wygenerować kod QR
+                return Ok(new {
+                    requires2FASetup = true,
+                    message = "Wymagana konfiguracja 2FA. Zeskanuj kod QR w aplikacji Authenticator.",
+                    secretKey = user.TwoFactorSecret
+                });
+            }
+        }
 
-namespace MainApi.DTOs;
+        // Dla zwykłych pracowników od razu generujemy token
+        var token = _tokenService.GenerateJwtToken(user);
+        return Ok(new { token });
+    }
 
-public class VerifyTwoFactorRequest
-{
-    [Required, EmailAddress]
-    public string Email { get; set; } = string.Empty;
+    [HttpPost("verify-2fa")]
+    public async Task<IActionResult> VerifyTwoFactor([FromBody] VerifyTwoFactorRequest request)
+    {
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
 
-    [Required]
-    public string Code { get; set; } = string.Empty;
+        if (user == null || string.IsNullOrEmpty(user.TwoFactorSecret))
+        {
+            return BadRequest(new { message = "Użytkownik nie istnieje lub nie ma skonfigurowanego 2FA." });
+        }
+
+        // Weryfikacja kodu z Google Authenticator / Authy za pomocą Otp.NET
+        var base32Bytes = Base32Encoding.ToBytes(user.TwoFactorSecret);
+        var totp = new Totp(base32Bytes);
+
+        // Weryfikacja kodu z oknem czasowym (tzw. Time Tolerance) na wypadek asynchronizacji zegarów
+        bool isValid = totp.VerifyTotp(request.Code, out long timeWindowUsed, VerificationWindow.RfcSpecifiedNetworkDelay);
+
+        if (!isValid)
+        {
+            return Unauthorized(new { message = "Nieprawidłowy lub przeterminowany kod 2FA." });
+        }
+
+        // Kod jest poprawny, wydajemy pełnoprawny token JWT
+        var token = _tokenService.GenerateJwtToken(user);
+        return Ok(new { token });
+    }
 }
 
 ================================================
@@ -804,7 +992,11 @@ var builder = WebApplication.CreateBuilder(args);
 // 1. Baza Danych
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
+    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString), 
+        mySqlOptions => mySqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 5, 
+            maxRetryDelay: TimeSpan.FromSeconds(5), 
+            errorNumbersToAdd: null)));
 
 // 2. KONFIGURACJA JWT
 var jwtSettings = builder.Configuration.GetSection("Jwt");
@@ -914,7 +1106,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+//app.UseHttpsRedirection();
 
 // MIDDLEWARE: Kolejność jest absolutnie kluczowa!
 app.UseCors("FrontendPolicy");
@@ -925,17 +1117,6 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
-
-================================================
-File: SharedModels/Enums/TicketCategory.cs
-================================================
-namespace SharedModels.Enums;
-
-public enum TicketCategory 
-{ 
-    Hardware, 
-    Software 
-}
 
 ================================================
 File: SharedModels/Events/TicketCreatedEvent.cs
@@ -950,294 +1131,102 @@ public class TicketCreatedEvent
 }
 
 ================================================
-File: WorkerService/WorkerService.csproj
+File: WorkerService/Program.cs
 ================================================
-<Project Sdk="Microsoft.NET.Sdk.Web">
-  
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+using WorkerService;
+using WorkerService.Hubs;
 
-  <ItemGroup>
-    <ProjectReference Include="..\SharedModels\SharedModels.csproj" />
-  </ItemGroup>
-  
-  <ItemGroup>
-    <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
-  </ItemGroup>
-  
-</Project>
+var builder = WebApplication.CreateBuilder(args);
 
-================================================
-File: .gitignore
-================================================
-# =========================
-# Zmienne środowiskowe i sekrety
-# =========================
-.env
-.env.*
-!.env.example
-appsettings.Development.json
-*.user
-
-# =========================
-# .NET / C#
-# =========================
-# Foldery z wynikiem kompilacji i plikami tymczasowymi
-bin/
-obj/
-TestResults/
-*.DotSettings.user
-
-# =========================
-# Pliki systemowe i tymczasowe (Linux / Edytory terminalowe)
-# =========================
-*~
-*.swp
-*.swo
-.DS_Store
-Thumbs.db
-
-# =========================
-# IDE i narzędzia (na wypadek współpracy)
-# =========================
-.vscode/
-.vs/
-.idea/
-*.sln.user
-
-# =========================
-# Docker
-# =========================
-.dockerignore
-
-================================================
-File: MainApi/Controllers/AuthController.cs
-================================================
-using MainApi.Data;
-using MainApi.DTOs;
-using MainApi.Services;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using OtpNet;
-
-namespace MainApi.Controllers;
-
-[ApiController]
-[Route("api/[controller]")]
-public class AuthController : ControllerBase
+// ====================================================================
+// KONFIGURACJA JWT
+// ====================================================================
+var jwtSettings = builder.Configuration.GetSection("Jwt");
+builder.Services.AddAuthentication(options =>
 {
-    private readonly AppDbContext _context;
-    private readonly TokenService _tokenService;
-
-    public AuthController(AppDbContext context, TokenService tokenService)
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
     {
-        _context = context;
-        _tokenService = tokenService;
-    }
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwtSettings["Issuer"],
+        ValidAudience = jwtSettings["Audience"],
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Key"]!))
+    };
 
-    [HttpPost("login")]
-    public async Task<IActionResult> Login([FromBody] LoginRequest request)
+    // SignalR w przeglądarkach wysyła token w QueryStringu (WebSockets nie obsługują nagłówków Authorization w przeglądarce)
+    options.Events = new JwtBearerEvents
     {
-        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
-
-        if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
+        OnMessageReceived = context =>
         {
-            return Unauthorized(new { message = "Nieprawidłowy email lub hasło." });
-        }
-
-        // Zgodnie ze specyfikacją: Admin ma bezwzględny obowiązek korzystania z 2FA
-        if (user.Role == SharedModels.Enums.Role.Admin)
-        {
-            if (user.TwoFactorEnabled)
+            var accessToken = context.Request.Query["access_token"];
+            var path = context.HttpContext.Request.Path;
+            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/notifications"))
             {
-                // Admin ma już 2FA, prosimy o kod weryfikacyjny
-                return Ok(new { 
-                    requires2FA = true, 
-                    message = "Wymagana weryfikacja 2FA. Przejdź do endpointu /api/auth/verify-2fa" 
-                });
+                context.Token = accessToken;
             }
-            else
-            {
-                // Wymuszenie konfiguracji 2FA dla nowego Admina
-                // Przesyłamy Secret do frontendu, by Vue mogło wygenerować kod QR
-                return Ok(new {
-                    requires2FASetup = true,
-                    message = "Wymagana konfiguracja 2FA. Zeskanuj kod QR w aplikacji Authenticator.",
-                    secretKey = user.TwoFactorSecret
-                });
-            }
+            return Task.CompletedTask;
         }
+    };
+});
 
-        // Dla zwykłych pracowników od razu generujemy token
-        var token = _tokenService.GenerateJwtToken(user);
-        return Ok(new { token });
-    }
+// ====================================================================
+// REJESTRACJA SERWISÓW
+// ====================================================================
+builder.Services.AddSignalR();
+builder.Services.AddHostedService<Worker>();
 
-    [HttpPost("verify-2fa")]
-    public async Task<IActionResult> VerifyTwoFactor([FromBody] VerifyTwoFactorRequest request)
+// --- KONFIGURACJA CORS ---
+var allowedOriginsRaw = builder.Configuration["AllowedOrigins"];
+var allowedOrigins = string.IsNullOrEmpty(allowedOriginsRaw) 
+    ? Array.Empty<string>() 
+    : allowedOriginsRaw.Split(';');
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("FrontendPolicy", policy =>
     {
-        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
-
-        if (user == null || string.IsNullOrEmpty(user.TwoFactorSecret))
+        if (allowedOrigins.Length > 0)
         {
-            return BadRequest(new { message = "Użytkownik nie istnieje lub nie ma skonfigurowanego 2FA." });
+            policy.WithOrigins(allowedOrigins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials(); // SignalR bezwzględnie tego wymaga!
         }
-
-        // Weryfikacja kodu z Google Authenticator / Authy za pomocą Otp.NET
-        var base32Bytes = Base32Encoding.ToBytes(user.TwoFactorSecret);
-        var totp = new Totp(base32Bytes);
-
-        // Weryfikacja kodu z oknem czasowym (tzw. Time Tolerance) na wypadek asynchronizacji zegarów
-        bool isValid = totp.VerifyTotp(request.Code, out long timeWindowUsed, VerificationWindow.RfcSpecifiedNetworkDelay);
-
-        if (!isValid)
+        else
         {
-            return Unauthorized(new { message = "Nieprawidłowy lub przeterminowany kod 2FA." });
+            // Fallback na środowisko lokalne
+            policy.SetIsOriginAllowed((host) => true) 
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials(); 
         }
+    });
+});
 
-        // Kod jest poprawny, wydajemy pełnoprawny token JWT
-        var token = _tokenService.GenerateJwtToken(user);
-        return Ok(new { token });
-    }
-}
+var app = builder.Build();
 
-================================================
-File: MainApi/Entities/User.cs
-================================================
-using System.ComponentModel.DataAnnotations;
-using SharedModels.Enums;
+// ====================================================================
+// KONFIGURACJA POTOKU HTTP (Middleware)
+// ====================================================================
+app.UseCors("FrontendPolicy"); // Używamy naszej nowej, bezpiecznej polityki
 
-namespace MainApi.Entities;
+// Autoryzacja MUSI być przed MapHub!
+app.UseAuthentication();
+app.UseAuthorization();
 
-public class User
-{
-    public Guid Id { get; set; } = Guid.NewGuid();
+app.MapHub<NotificationHub>("/notifications");
 
-    [Required, EmailAddress]
-    public string Email { get; set; } = string.Empty;
-
-    [Required]
-    public string PasswordHash { get; set; } = string.Empty;
-
-    public Role Role { get; set; }
-
-    public bool TwoFactorEnabled { get; set; }
-    public string? TwoFactorSecret { get; set; }
-
-    public string? ContactInfo { get; set; }
-
-    // Relacja 1 do wielu (Jeden użytkownik może mieć wiele zgłoszeń)
-    public ICollection<Ticket> Tickets { get; set; } = new List<Ticket>();
-}
-
-================================================
-File: SharedModels/Enums/Role.cs
-================================================
-namespace SharedModels.Enums;
-
-public enum Role 
-{ 
-    Admin, 
-    Employee 
-}
-
-================================================
-File: SharedModels/Enums/TicketStatus.cs
-================================================
-namespace SharedModels.Enums;
-
-public enum TicketStatus 
-{ 
-    New, 
-    InProgress, 
-    Resolved, 
-    Closed 
-}
-
-================================================
-File: SharedModels/SharedModels.csproj
-================================================
-﻿<Project Sdk="Microsoft.NET.Sdk">
-
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
-
-</Project>
-
-
-================================================
-File: MainApi/Entities/Ticket.cs
-================================================
-using System.ComponentModel.DataAnnotations;
-using SharedModels.Enums;
-
-namespace MainApi.Entities;
-
-public class Ticket
-{
-    public Guid Id { get; set; } = Guid.NewGuid();
-
-    [Required]
-    public string Title { get; set; } = string.Empty;
-
-    [Required]
-    public string Description { get; set; } = string.Empty;
-
-    public TicketStatus Status { get; set; } = TicketStatus.New;
-    public TicketCategory Category { get; set; }
-
-    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-
-    // Klucz obcy i właściwość nawigacyjna do twórcy zgłoszenia
-    public Guid CreatorId { get; set; }
-    public User? Creator { get; set; }
-    // Dodaj tę linijkę w klasie Ticket:
-    public bool IsArchived { get; set; } = false;
-}
-
-================================================
-File: WorkerService/appsettings.json
-================================================
-{
-  "Logging": {
-    "LogLevel": {
-      "Default": "Information",
-      "Microsoft.Hosting.Lifetime": "Information"
-    }
-  },
-  "AllowedOrigins": "http://localhost:5173;http://localhost:8080",
-  "RabbitMQ": {
-    "HostName": "rabbitmq" 
-  },
-  "Jwt": {
-    "Key": "SET_IN_ENVIRONMENT",
-    "Issuer": "TicketingApi",
-    "Audience": "TicketingUsers"
-  }
-}
-
-================================================
-File: MainApi/DTOs/LoginRequest.cs
-================================================
-using System.ComponentModel.DataAnnotations;
-
-namespace MainApi.DTOs;
-
-public class LoginRequest
-{
-    [Required, EmailAddress]
-    public string Email { get; set; } = string.Empty;
-
-    [Required]
-    public string Password { get; set; } = string.Empty;
-}
+app.Run();
 
 ================================================
 File: MainApi/Controllers/UsersController.cs
@@ -1413,198 +1402,234 @@ public class UsersController : ControllerBase
             return NotFound(new { message = "Nie znaleziono użytkownika." });
         }
 
-        // Zabezpieczenie: Admin nie powinien móc usunąć samego siebie
-        // (Można to opcjonalnie wyciągnąć z tokenu claims, ale podstawowe sprawdzenie chroni przed prostymi błędami w UI)
+        // Zabezpieczenie: Admin nie może usunąć samego siebie
+        var currentUserId = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value 
+                         ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                         
+        if (currentUserId == id.ToString())
+        {
+            return BadRequest(new { message = "Nie możesz usunąć własnego konta administratora." });
+        }
         
         _context.Users.Remove(user);
-        await _context.SaveChangesAsync();
 
-        return Ok(new { message = "Użytkownik został usunięty z systemu." });
+        try
+        {
+            await _context.SaveChangesAsync();
+            return Ok(new { message = "Użytkownik został usunięty z systemu." });
+        }
+        catch (DbUpdateException)
+        {
+            // Łapiemy wyjątek z bazy danych (np. naruszenie klucza obcego przez przypisane tickety)
+            return Conflict(new { 
+                message = "Nie można usunąć tego użytkownika, ponieważ posiada on przypisane zgłoszenia (tickety) w systemie." 
+            });
+        }
+        catch (Exception)
+        {
+            // Fallback dla innych, nieprzewidzianych błędów
+            return StatusCode(500, new { message = "Wystąpił nieoczekiwany błąd podczas usuwania użytkownika." });
+        }
     }
 }
 
 ================================================
-File: MainApi/DTOs/CreateTicketRequest.cs
+File: MainApi/Entities/User.cs
+================================================
+using System.ComponentModel.DataAnnotations;
+using SharedModels.Enums;
+
+namespace MainApi.Entities;
+
+public class User
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+
+    [Required, EmailAddress]
+    public string Email { get; set; } = string.Empty;
+
+    [Required]
+    public string PasswordHash { get; set; } = string.Empty;
+
+    public Role Role { get; set; }
+
+    public bool TwoFactorEnabled { get; set; }
+    public string? TwoFactorSecret { get; set; }
+
+    public string? ContactInfo { get; set; }
+
+    // Relacja 1 do wielu (Jeden użytkownik może mieć wiele zgłoszeń)
+    public ICollection<Ticket> Tickets { get; set; } = new List<Ticket>();
+}
+
+================================================
+File: MainApi/Properties/launchSettings.json
+================================================
+﻿{
+  "$schema": "http://json.schemastore.org/launchsettings.json",
+  "iisSettings": {
+    "windowsAuthentication": false,
+    "anonymousAuthentication": true,
+    "iisExpress": {
+      "applicationUrl": "http://localhost:28845",
+      "sslPort": 44396
+    }
+  },
+  "profiles": {
+    "http": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "launchUrl": "swagger",
+      "applicationUrl": "http://localhost:5038",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    },
+    "https": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "launchUrl": "swagger",
+      "applicationUrl": "https://localhost:7047;http://localhost:5038",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    },
+    "IIS Express": {
+      "commandName": "IISExpress",
+      "launchBrowser": true,
+      "launchUrl": "swagger",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}
+
+
+================================================
+File: SharedModels/SharedModels.csproj
+================================================
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
+
+
+================================================
+File: MainApi/DTOs/CreateUserRequest.cs
+================================================
+using System.ComponentModel.DataAnnotations;
+using SharedModels.Enums;
+
+namespace MainApi.DTOs;
+
+public class CreateUserRequest
+{
+    [Required, EmailAddress]
+    public string Email { get; set; } = string.Empty;
+
+    [Required, MinLength(6, ErrorMessage = "Hasło musi mieć co najmniej 6 znaków.")]
+    public string Password { get; set; } = string.Empty;
+
+    [Required]
+    public Role Role { get; set; }
+
+    public string? ContactInfo { get; set; }
+}
+
+================================================
+File: MainApi/DTOs/VerifyTwoFactorRequest.cs
+================================================
+using System.ComponentModel.DataAnnotations;
+
+namespace MainApi.DTOs;
+
+public class VerifyTwoFactorRequest
+{
+    [Required, EmailAddress]
+    public string Email { get; set; } = string.Empty;
+
+    [Required]
+    public string Code { get; set; } = string.Empty;
+}
+
+================================================
+File: WorkerService/appsettings.json
+================================================
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.Hosting.Lifetime": "Information"
+    }
+  },
+  "AllowedOrigins": "http://localhost:5173;http://localhost:8080",
+  "RabbitMQ": {
+    "HostName": "rabbitmq" 
+  },
+  "Jwt": {
+    "Key": "SET_IN_ENVIRONMENT",
+    "Issuer": "TicketingApi",
+    "Audience": "TicketingUsers"
+  }
+}
+
+================================================
+File: MainApi/DTOs/LoginRequest.cs
+================================================
+using System.ComponentModel.DataAnnotations;
+
+namespace MainApi.DTOs;
+
+public class LoginRequest
+{
+    [Required, EmailAddress]
+    public string Email { get; set; } = string.Empty;
+
+    [Required]
+    public string Password { get; set; } = string.Empty;
+}
+
+================================================
+File: MainApi/DTOs/UpdateTicketStatusRequest.cs
 ================================================
 using SharedModels.Enums;
 using System.ComponentModel.DataAnnotations;
 
 namespace MainApi.DTOs;
 
-public class CreateTicketRequest
+public class UpdateTicketStatusRequest
 {
     [Required]
-    public string Title { get; set; } = string.Empty;
-
-    [Required]
-    public string Description { get; set; } = string.Empty;
-
-    [Required]
-    public TicketCategory Category { get; set; }
+    public TicketStatus Status { get; set; } // Zwróć uwagę na nazwę swojego enuma, jeśli masz inną
 }
 
 ================================================
-File: MainApi/MainApi.csproj
+File: MainApi/DTOs/UpdateUserRequest.cs
 ================================================
-<Project Sdk="Microsoft.NET.Sdk.Web">
+using System.ComponentModel.DataAnnotations;
+using SharedModels.Enums;
 
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-  </PropertyGroup>
+namespace MainApi.DTOs;
 
-  <ItemGroup>
-    <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.27" />
-    <PackageReference Include="Otp.NET" Version="1.4.1" />
-    <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="9.0.0" />
-    <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\SharedModels\SharedModels.csproj" />
-  </ItemGroup>
-
-</Project>
-
-
-================================================
-File: TicketingSystem.sln
-================================================
-﻿
-Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.0.31903.59
-MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MainApi", "MainApi\MainApi.csproj", "{9D5F2861-0F16-485B-8E71-9776372CCB9F}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WorkerService", "WorkerService\WorkerService.csproj", "{271B787B-5A82-45A9-8BE4-8E16BEDCC745}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SharedModels", "SharedModels\SharedModels.csproj", "{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}"
-EndProject
-Global
-	GlobalSection(SolutionConfigurationPlatforms) = preSolution
-		Debug|Any CPU = Debug|Any CPU
-		Release|Any CPU = Release|Any CPU
-	EndGlobalSection
-	GlobalSection(SolutionProperties) = preSolution
-		HideSolutionNode = FALSE
-	EndGlobalSection
-	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{9D5F2861-0F16-485B-8E71-9776372CCB9F}.Release|Any CPU.Build.0 = Release|Any CPU
-		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{271B787B-5A82-45A9-8BE4-8E16BEDCC745}.Release|Any CPU.Build.0 = Release|Any CPU
-		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{54F97C3F-2EA1-4966-B5C4-46E3CF82BA43}.Release|Any CPU.Build.0 = Release|Any CPU
-	EndGlobalSection
-EndGlobal
-
-
-================================================
-File: WorkerService/Program.cs
-================================================
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.IdentityModel.Tokens;
-using System.Text;
-using WorkerService;
-using WorkerService.Hubs;
-
-var builder = WebApplication.CreateBuilder(args);
-
-// ====================================================================
-// KONFIGURACJA JWT
-// ====================================================================
-var jwtSettings = builder.Configuration.GetSection("Jwt");
-builder.Services.AddAuthentication(options =>
+public class UpdateUserRequest
 {
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-})
-.AddJwtBearer(options =>
-{
-    options.TokenValidationParameters = new TokenValidationParameters
-    {
-        ValidateIssuer = true,
-        ValidateAudience = true,
-        ValidateLifetime = true,
-        ValidateIssuerSigningKey = true,
-        ValidIssuer = jwtSettings["Issuer"],
-        ValidAudience = jwtSettings["Audience"],
-        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["Key"]!))
-    };
+    [Required, EmailAddress]
+    public string Email { get; set; } = string.Empty;
 
-    // SignalR w przeglądarkach wysyła token w QueryStringu (WebSockets nie obsługują nagłówków Authorization w przeglądarce)
-    options.Events = new JwtBearerEvents
-    {
-        OnMessageReceived = context =>
-        {
-            var accessToken = context.Request.Query["access_token"];
-            var path = context.HttpContext.Request.Path;
-            if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/notifications"))
-            {
-                context.Token = accessToken;
-            }
-            return Task.CompletedTask;
-        }
-    };
-});
+    [Required]
+    public Role Role { get; set; }
 
-// ====================================================================
-// REJESTRACJA SERWISÓW
-// ====================================================================
-builder.Services.AddSignalR();
-builder.Services.AddHostedService<Worker>();
+    public string? ContactInfo { get; set; }
 
-// --- KONFIGURACJA CORS ---
-var allowedOriginsRaw = builder.Configuration["AllowedOrigins"];
-var allowedOrigins = string.IsNullOrEmpty(allowedOriginsRaw) 
-    ? Array.Empty<string>() 
-    : allowedOriginsRaw.Split(';');
-
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("FrontendPolicy", policy =>
-    {
-        if (allowedOrigins.Length > 0)
-        {
-            policy.WithOrigins(allowedOrigins)
-                  .AllowAnyHeader()
-                  .AllowAnyMethod()
-                  .AllowCredentials(); // SignalR bezwzględnie tego wymaga!
-        }
-        else
-        {
-            // Fallback na środowisko lokalne
-            policy.SetIsOriginAllowed((host) => true) 
-                  .AllowAnyHeader()
-                  .AllowAnyMethod()
-                  .AllowCredentials(); 
-        }
-    });
-});
-
-var app = builder.Build();
-
-// ====================================================================
-// KONFIGURACJA POTOKU HTTP (Middleware)
-// ====================================================================
-app.UseCors("FrontendPolicy"); // Używamy naszej nowej, bezpiecznej polityki
-
-// Autoryzacja MUSI być przed MapHub!
-app.UseAuthentication();
-app.UseAuthorization();
-
-app.MapHub<NotificationHub>("/notifications");
-
-app.Run();
+    // Opcjonalne - wypełniane tylko w przypadku zmiany/resetu hasła
+    public string? Password { get; set; }
+}
 
