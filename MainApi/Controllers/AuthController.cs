@@ -87,6 +87,12 @@ public class AuthController : ControllerBase
         }
 
         // 3. Kod poprawny i tożsamość potwierdzona! Wydajemy pełnoprawny token.
+        if (!user.TwoFactorEnabled)
+        {
+            user.TwoFactorEnabled = true;
+            await _context.SaveChangesAsync();
+        }
+
         var token = _tokenService.GenerateJwtToken(user);
         return Ok(new { token });
     }
