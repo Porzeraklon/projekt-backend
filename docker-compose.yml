@@ -35,7 +35,7 @@ services:
       - RabbitMQ__HostName=rabbitmq
       - Jwt__Key=${JWT_SECRET}
       - ASPNETCORE_ENVIRONMENT=Development
-      - AllowedOrigins=http://ticketing-frontend.local;https://mojadomena.pl;http://localhost:5173
+      - AllowedOrigins=http://ticketing-frontend.local;https://mojadomena.pl;http://localhost:5173;http://localhost:3000
     depends_on:
       - mariadb
       - rabbitmq
@@ -51,11 +51,24 @@ services:
       - RabbitMQ__HostName=rabbitmq
       - Jwt__Key=${JWT_SECRET}
       - ASPNETCORE_ENVIRONMENT=Development
-      # DODANO: Wstrzykujemy listę dozwolonych adresów Frontendowych
-      - AllowedOrigins=http://ticketing-frontend.local;https://mojadomena.pl;http://localhost:5173
+      - AllowedOrigins=http://ticketing-frontend.local;https://mojadomena.pl;http://localhost:5173;http://localhost:3000
     depends_on:
       - rabbitmq
       - main-api
+
+  # 5. FRONTEND (Pobierany z GHCR)
+  frontend:
+    image: ghcr.io/porzeraklon/ticketing-frontend:latest
+    container_name: ticketing-frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NUXT_API_BASE_URL=http://main-api:8080
+      - NUXT_NOTIFICATION_HUB_BASE_URL=http://worker-service:8080
+    depends_on:
+      - main-api
+      - worker-service
 
 volumes:
   mariadb_data:
