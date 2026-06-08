@@ -1,4 +1,5 @@
 using MainApi.Data;
+using MainApi.Middleware; // <-- DODANE: Import naszego Middleware
 using MainApi.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -43,7 +44,6 @@ builder.Services.AddAuthentication(options =>
 // ====================================================================
 
 // --- KONFIGURACJA CORS ---
-// Pobieramy adresy z konfiguracji (np. appsettings.json lub zmiennych środowiskowych Dockera)
 var allowedOriginsRaw = builder.Configuration["AllowedOrigins"];
 var allowedOrigins = string.IsNullOrEmpty(allowedOriginsRaw) 
     ? Array.Empty<string>() 
@@ -62,7 +62,6 @@ builder.Services.AddCors(options =>
         }
         else
         {
-            // Fallback (np. w środowisku lokalnym, jeśli brakuje zmiennej)
             policy.SetIsOriginAllowed(_ => true)
                   .AllowAnyHeader()
                   .AllowAnyMethod()
@@ -118,6 +117,10 @@ using (var scope = app.Services.CreateScope())
 // ====================================================================
 // KONFIGURACJA POTOKU HTTP (Middleware)
 // ====================================================================
+
+// --> DODANE: Globalna obsługa błędów jako pierwsza w potoku! <--
+app.UseMiddleware<ExceptionHandlingMiddleware>();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
