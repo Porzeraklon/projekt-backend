@@ -1,4 +1,4 @@
-// Plik: MainApi/Middleware/ExceptionHandlingMiddleware.cs
+
 using System.Net;
 using System.Text.Json;
 
@@ -19,12 +19,12 @@ public class ExceptionHandlingMiddleware
     {
         try
         {
-            // Próba wykonania właściwego żądania (np. wejście do kontrolera)
+
             await _next(context);
         }
         catch (Exception ex)
         {
-            // Złapanie dowolnego błędu, który wystąpił w aplikacji
+
             _logger.LogError(ex, "Wystąpił nieobsłużony wyjątek podczas przetwarzania żądania.");
             await HandleExceptionAsync(context, ex);
         }
@@ -33,12 +33,12 @@ public class ExceptionHandlingMiddleware
     private static Task HandleExceptionAsync(HttpContext context, Exception exception)
     {
         context.Response.ContentType = "application/json";
-        
-        // Domyślny kod błędu
+
+
         context.Response.StatusCode = (int)HttpStatusCode.InternalServerError;
         var message = "Wystąpił wewnętrzny błąd serwera.";
 
-        // Możesz tu łatwo mapować konkretne wyjątki na konkretne kody HTTP
+
         if (exception is KeyNotFoundException)
         {
             context.Response.StatusCode = (int)HttpStatusCode.NotFound;
@@ -49,15 +49,15 @@ public class ExceptionHandlingMiddleware
             context.Response.StatusCode = (int)HttpStatusCode.Forbidden;
             message = "Brak dostępu do zasobu.";
         }
-        // else if (exception is TwojWlasnyWyjatekBiznesowy) ...
 
-        // Obiekt odpowiedzi
+
+
         var response = new
         {
             StatusCode = context.Response.StatusCode,
             Message = message,
-            // Wersja deweloperska zwraca szczegóły błędu - na produkcji (Release) można to ukryć
-            DetailedError = exception.Message 
+
+            DetailedError = exception.Message
         };
 
         var jsonResponse = JsonSerializer.Serialize(response);

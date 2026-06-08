@@ -13,6 +13,6 @@ public class UpdateUserRequest
 
     public string? ContactInfo { get; set; }
 
-    // Opcjonalne - wypełniane tylko w przypadku zmiany/resetu hasła
+
     public string? Password { get; set; }
 }

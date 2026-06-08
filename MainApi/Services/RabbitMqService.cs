@@ -5,9 +5,9 @@ using System.Text.Json;
 
 namespace MainApi.Services;
 
-// ====================================================================
-// 1. POLITYKA ZARZĄDZANIA KANAŁAMI (Jak pula ma tworzyć i niszczyć obiekty)
-// ====================================================================
+
+
+
 public class RabbitModelPooledObjectPolicy : IPooledObjectPolicy<IModel>
 {
     private readonly IConnection _connection;
@@ -19,13 +19,13 @@ public class RabbitModelPooledObjectPolicy : IPooledObjectPolicy<IModel>
 
     public IModel Create()
     {
-        // Kiedy pula jest pusta, tworzy nowy kanał
+
         return _connection.CreateModel();
     }
 
     public bool Return(IModel obj)
     {
-        // Kiedy zwracamy kanał do puli, sprawdzamy czy nadal żyje
+
         if (obj.IsOpen)
         {
             return true;
@@ -38,9 +38,9 @@ public class RabbitModelPooledObjectPolicy : IPooledObjectPolicy<IModel>
     }
 }
 
-// ====================================================================
-// 2. GŁÓWNY SERWIS RABBITMQ
-// ====================================================================
+
+
+
 public class RabbitMqService : IDisposable
 {
     private readonly IConnection _connection;
@@ -50,27 +50,27 @@ public class RabbitMqService : IDisposable
     {
         var host = configuration["RabbitMQ:HostName"] ?? "localhost";
         var factory = new ConnectionFactory() { HostName = host };
-        
-        // Ustanawiamy JEDNO globalne połączenie dla całego cyklu życia API
+
+
         _connection = factory.CreateConnection();
 
-        // Konfiguracja puli obiektów
+
         var policy = new RabbitModelPooledObjectPolicy(_connection);
-        var provider = new DefaultObjectPoolProvider 
-        { 
-            MaximumRetained = Environment.ProcessorCount * 2 // Optymalna liczba trzymanych w pamięci kanałów
+        var provider = new DefaultObjectPoolProvider
+        {
+            MaximumRetained = Environment.ProcessorCount * 2
         };
         _channelPool = provider.Create(policy);
     }
 
     public void PublishTicketCreatedEvent<T>(T message)
     {
-        // Pobieramy gotowy kanał z puli
+
         var channel = _channelPool.Get();
-        
+
         try
         {
-            // Deklaracja kolejki (idempotentna - jeśli istnieje, nic się nie stanie)
+
             channel.QueueDeclare(queue: "ticket_notifications",
                                  durable: true,
                                  exclusive: false,
@@ -87,14 +87,14 @@ public class RabbitMqService : IDisposable
         }
         finally
         {
-            // ZAWSZE zwracamy kanał do puli, nawet jak poleci wyjątek!
+
             _channelPool.Return(channel);
         }
     }
 
     public void Dispose()
     {
-        // Zamykamy połączenie przy wyłączaniu aplikacji
+
         _connection?.Close();
         _connection?.Dispose();
     }

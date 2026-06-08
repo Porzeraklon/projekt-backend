@@ -26,9 +26,9 @@ public class TicketsController : ControllerBase
         _rabbitMqService = rabbitMqService;
     }
 
-    // =========================================================
-    // GET: /api/tickets (Z opcją uwzględnienia zarchiwizowanych)
-    // =========================================================
+
+
+
     [HttpGet]
     [Authorize(Roles = nameof(Role.Admin))]
     public async Task<IActionResult> GetAllTickets([FromQuery] bool includeArchived = false)
@@ -37,7 +37,7 @@ public class TicketsController : ControllerBase
             .Include(t => t.Creator)
             .AsQueryable();
 
-        // Jeśli admin nie chce widzieć zarchiwizowanych, filtrujemy je
+
         if (!includeArchived)
         {
             query = query.Where(t => !t.IsArchived);
@@ -62,13 +62,13 @@ public class TicketsController : ControllerBase
         return Ok(tickets);
     }
 
-    // =========================================================
-    // POST: /api/tickets (Tworzenie nowego zgłoszenia)
-    // =========================================================
+
+
+
     [HttpPost]
     public async Task<IActionResult> CreateTicket([FromBody] CreateTicketRequest request)
     {
-        var userIdString = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value 
+        var userIdString = User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value
                         ?? User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
 
         if (string.IsNullOrEmpty(userIdString) || !Guid.TryParse(userIdString, out Guid userId))
@@ -82,7 +82,7 @@ public class TicketsController : ControllerBase
             Description = request.Description,
             Category = request.Category,
             CreatorId = userId,
-            IsArchived = false // Nowy ticket nigdy nie jest zarchiwizowany
+            IsArchived = false
         };
 
         _context.Tickets.Add(ticket);
@@ -100,15 +100,15 @@ public class TicketsController : ControllerBase
         return Ok(new { message = "Zgłoszenie zostało utworzone.", ticketId = ticket.Id });
     }
 
-    // =========================================================
-    // PATCH: /api/tickets/{id}/status (Zmiana statusu i automatyczna archiwizacja)
-    // =========================================================
+
+
+
     [HttpPatch("{id:guid}/status")]
     [Authorize(Roles = nameof(Role.Admin))]
     public async Task<IActionResult> UpdateTicketStatus(Guid id, [FromBody] UpdateTicketStatusRequest request)
     {
         var ticket = await _context.Tickets.FirstOrDefaultAsync(t => t.Id == id);
-        
+
         if (ticket == null)
         {
             return NotFound(new { message = "Nie znaleziono zgłoszenia." });
@@ -116,14 +116,14 @@ public class TicketsController : ControllerBase
 
         ticket.Status = request.Status;
 
-        // Logika archiwizacji: Jeśli status to Completed (wartość 1 w Twoim enumie), archiwizujemy
-        // Dostosuj 'TicketStatus.Completed' do nazwy w Twoim enumnie!
+
+
         ticket.IsArchived = (request.Status == TicketStatus.Closed);
 
         await _context.SaveChangesAsync();
 
-        return Ok(new { 
-            message = "Status zaktualizowany.", 
+        return Ok(new {
+            message = "Status zaktualizowany.",
             newStatus = ticket.Status,
             isArchived = ticket.IsArchived
         });

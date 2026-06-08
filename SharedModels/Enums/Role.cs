@@ -1,7 +1,7 @@
 namespace SharedModels.Enums;
 
-public enum Role 
-{ 
-    Admin, 
-    Employee 
+public enum Role
+{
+    Admin,
+    Employee
 }

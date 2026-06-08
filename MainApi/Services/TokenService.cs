@@ -15,31 +15,31 @@ public class TokenService
         _configuration = configuration;
     }
 
-    // ==========================================================
-    // 1. Zwykły token (Pełny dostęp)
-    // ==========================================================
+
+
+
     public string GenerateJwtToken(User user)
     {
         return GenerateToken(
-            user, 
-            double.Parse(_configuration["Jwt:ExpireMinutes"]!), 
+            user,
+            double.Parse(_configuration["Jwt:ExpireMinutes"]!),
             _configuration["Jwt:Audience"]!
         );
     }
 
-    // ==========================================================
-    // 2. Token Pre-Autoryzacyjny (Tylko dla 2FA)
-    // ==========================================================
+
+
+
     public string GeneratePreAuthToken(User user)
     {
-        // Token ważny tylko 5 minut z unikalnym Audience, 
-        // by nie działał na standardowych endpointach.
+
+
         return GenerateToken(user, 5, "TicketingPreAuth");
     }
 
-    // ==========================================================
-    // 3. Wewnętrzny generator
-    // ==========================================================
+
+
+
     private string GenerateToken(User user, double expireMinutes, string audience)
     {
         var jwtSettings = _configuration.GetSection("Jwt");
@@ -55,7 +55,7 @@ public class TokenService
 
         var token = new JwtSecurityToken(
             issuer: jwtSettings["Issuer"],
-            audience: audience, // Tu ustalamy, czy to token pełny, czy pre-auth
+            audience: audience,
             claims: claims,
             expires: DateTime.UtcNow.AddMinutes(expireMinutes),
             signingCredentials: creds
@@ -64,9 +64,9 @@ public class TokenService
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
-    // ==========================================================
-    // 4. Manualna walidacja tokenu Pre-Auth
-    // ==========================================================
+
+
+
     public Guid? ValidatePreAuthTokenAndGetUserId(string token)
     {
         if (string.IsNullOrEmpty(token)) return null;
@@ -75,9 +75,9 @@ public class TokenService
         var tokenHandler = new JwtSecurityTokenHandler();
         var key = Encoding.UTF8.GetBytes(jwtSettings["Key"]!);
 
-        try 
+        try
         {
-            // Walidujemy token ręcznie, upewniając się, że to token PreAuth
+
             tokenHandler.ValidateToken(token, new TokenValidationParameters
             {
                 ValidateIssuerSigningKey = true,
@@ -85,8 +85,8 @@ public class TokenService
                 ValidateIssuer = true,
                 ValidIssuer = jwtSettings["Issuer"],
                 ValidateAudience = true,
-                ValidAudience = "TicketingPreAuth", // Odmowa, jeśli użyto pełnego tokenu!
-                ClockSkew = TimeSpan.Zero // Wymuszamy ścisłe 5 minut bez opóźnień
+                ValidAudience = "TicketingPreAuth",
+                ClockSkew = TimeSpan.Zero
             }, out SecurityToken validatedToken);
 
             var jwtToken = (JwtSecurityToken)validatedToken;
@@ -100,7 +100,7 @@ public class TokenService
         }
         catch
         {
-            // Łapie błędy wygaśnięcia, zepsutego podpisu lub złego Audience
+
             return null;
         }
     }

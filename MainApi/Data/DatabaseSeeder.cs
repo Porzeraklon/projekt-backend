@@ -8,12 +8,12 @@ public static class DatabaseSeeder
 {
     public static void Seed(AppDbContext context)
     {
-        // Tworzy bazę danych (jeśli nie istnieje) na podstawie Twojego DbContextu
-        context.Database.EnsureCreated(); 
+
+        context.Database.EnsureCreated();
 
         if (!context.Users.Any())
         {
-            // Generowanie klucza 2FA dla Admina
+
             var key = KeyGeneration.GenerateRandomKey(20);
             var base32Secret = Base32Encoding.ToString(key);
 
@@ -39,7 +39,7 @@ public static class DatabaseSeeder
             context.Users.AddRange(admin, employee);
             context.SaveChanges();
 
-            // Wypisujemy tajny klucz jawnym tekstem do testów
+
             Console.WriteLine("\n==================================================");
             Console.WriteLine(" DATA SEEDING: Utworzono konta testowe!");
             Console.WriteLine($" Admin Email: {admin.Email}");

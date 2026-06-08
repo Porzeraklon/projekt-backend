@@ -6,5 +6,5 @@ namespace MainApi.DTOs;
 public class UpdateTicketStatusRequest
 {
     [Required]
-    public TicketStatus Status { get; set; } // Zwróć uwagę na nazwę swojego enuma, jeśli masz inną
+    public TicketStatus Status { get; set; }
 }

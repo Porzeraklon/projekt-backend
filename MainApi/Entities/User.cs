@@ -20,6 +20,6 @@ public class User
 
     public string? ContactInfo { get; set; }
 
-    // Relacja 1 do wielu (Jeden użytkownik może mieć wiele zgłoszeń)
+
     public ICollection<Ticket> Tickets { get; set; } = new List<Ticket>();
 }

@@ -18,9 +18,9 @@ public class Ticket
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-    // Klucz obcy i właściwość nawigacyjna do twórcy zgłoszenia
+
     public Guid CreatorId { get; set; }
     public User? Creator { get; set; }
-    // Dodaj tę linijkę w klasie Ticket:
+
     public bool IsArchived { get; set; } = false;
 }

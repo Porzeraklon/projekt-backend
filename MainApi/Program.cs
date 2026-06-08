@@ -1,5 +1,5 @@
 using MainApi.Data;
-using MainApi.Middleware; // <-- DODANE: Import naszego Middleware
+using MainApi.Middleware;
 using MainApi.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -8,16 +8,16 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Baza Danych
+
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString), 
+    options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString),
         mySqlOptions => mySqlOptions.EnableRetryOnFailure(
-            maxRetryCount: 5, 
-            maxRetryDelay: TimeSpan.FromSeconds(5), 
+            maxRetryCount: 5,
+            maxRetryDelay: TimeSpan.FromSeconds(5),
             errorNumbersToAdd: null)));
 
-// 2. KONFIGURACJA JWT
+
 var jwtSettings = builder.Configuration.GetSection("Jwt");
 var secretKey = jwtSettings["Key"]!;
 builder.Services.AddAuthentication(options =>
@@ -39,14 +39,14 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-// ====================================================================
-// REJESTRACJA SERWISÓW (Zawsze przed builder.Build()!)
-// ====================================================================
 
-// --- KONFIGURACJA CORS ---
+
+
+
+
 var allowedOriginsRaw = builder.Configuration["AllowedOrigins"];
-var allowedOrigins = string.IsNullOrEmpty(allowedOriginsRaw) 
-    ? Array.Empty<string>() 
+var allowedOrigins = string.IsNullOrEmpty(allowedOriginsRaw)
+    ? Array.Empty<string>()
     : allowedOriginsRaw.Split(';');
 
 builder.Services.AddCors(options =>
@@ -102,23 +102,23 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-// --- ZAMKNIĘCIE I ZBUDOWANIE APLIKACJI ---
+
 var app = builder.Build();
 
-// ====================================================================
-// DATA SEEDING
-// ====================================================================
+
+
+
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     DatabaseSeeder.Seed(dbContext);
 }
 
-// ====================================================================
-// KONFIGURACJA POTOKU HTTP (Middleware)
-// ====================================================================
 
-// --> DODANE: Globalna obsługa błędów jako pierwsza w potoku! <--
+
+
+
+
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 if (app.Environment.IsDevelopment())
@@ -127,9 +127,9 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-//app.UseHttpsRedirection();
 
-// MIDDLEWARE: Kolejność jest absolutnie kluczowa!
+
+
 app.UseCors("FrontendPolicy");
 
 app.UseAuthentication();

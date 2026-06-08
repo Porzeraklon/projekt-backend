@@ -14,16 +14,16 @@ public class AppDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
-        // Wymuszenie unikalności adresu Email
+
         modelBuilder.Entity<User>()
             .HasIndex(u => u.Email)
             .IsUnique();
 
-        // Konfiguracja relacji bazy danych
+
         modelBuilder.Entity<Ticket>()
             .HasOne(t => t.Creator)
             .WithMany(u => u.Tickets)
             .HasForeignKey(t => t.CreatorId)
-            .OnDelete(DeleteBehavior.Restrict); // Zapobiega kaskadowemu usunięciu ticketów przy usunięciu użytkownika
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

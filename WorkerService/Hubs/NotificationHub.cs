@@ -12,7 +12,7 @@ public class NotificationHub : Hub
         {
             await Groups.AddToGroupAsync(Context.ConnectionId, "AdminsGroup");
         }
-        
+
         await base.OnConnectedAsync();
     }
 
@@ -22,7 +22,7 @@ public class NotificationHub : Hub
         {
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, "AdminsGroup");
         }
-        
+
         await base.OnDisconnectedAsync(exception);
     }
 }

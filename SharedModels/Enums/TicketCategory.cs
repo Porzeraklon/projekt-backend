@@ -1,7 +1,7 @@
 namespace SharedModels.Enums;
 
-public enum TicketCategory 
-{ 
-    Hardware, 
-    Software 
+public enum TicketCategory
+{
+    Hardware,
+    Software
 }
